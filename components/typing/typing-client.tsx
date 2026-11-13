@@ -927,7 +927,11 @@ export default function TypingClient({
               ? 'border-brand/30 ring-1 ring-brand/15 focus-within:border-brand/40 focus-within:ring-2 focus-within:ring-brand/30'
               : 'border-border focus-within:border-brand/40 focus-within:ring-2 focus-within:ring-brand/20'
           )}
-          onClick={() => inputRef.current?.focus()}
+          onClick={(e) => {
+            e.preventDefault();
+            startIfIdle();
+            inputRef.current?.focus();
+          }}
           role="textbox"
           aria-label={
             isBlind ? 'Typing area (blind mode)' : 'Typing passage'
