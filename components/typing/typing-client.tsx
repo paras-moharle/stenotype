@@ -562,6 +562,22 @@ export default function TypingClient({
     ? Math.min(100, Math.round((typed.length / reference.length) * 100))
     : 0;
 
+  /** Word count for display — more useful than raw character counts. */
+  const wordsTyped = (text: string) =>
+    text.trim().split(/\s+/).filter((w) => w.length > 0).length;
+
+  /** Correct word count for display (word-by-word match, no cascade). */
+  const correctWords = () => {
+    const pw = reference.trim().split(/\s+/).filter((w) => w.length > 0);
+    const tw = typed.trim().split(/\s+/).filter((w) => w.length > 0);
+    let correct = 0;
+    const len = Math.min(pw.length, tw.length);
+    for (let i = 0; i < len; i++) {
+      if (pw[i] === tw[i]) correct++;
+    }
+    return correct;
+  };
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
@@ -839,20 +855,20 @@ export default function TypingClient({
                 <>
                   <Eye className="h-3 w-3 text-muted-foreground" />
                   <span className="text-muted-foreground">
-                    Practice run — not counted
+                    Practice — not scored
                   </span>
                 </>
               )}
             </span>
             <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-              {typed.length}/{reference.length}
+              {wordsTyped(typed)}/{wordsTyped(reference)}
             </span>
           </div>
         )}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {isBlind && !isFinished ? (
             <>
-              <MetricCell label="typed" value={typed.length} />
+              <MetricCell label="typed" value={wordsTyped(typed)} />
               <MetricCell
                 label={timed ? 'time' : 'elapsed'}
                 value={`${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, '0')}`}
@@ -864,7 +880,11 @@ export default function TypingClient({
             <>
               <MetricCell label="wpm" value={score.wpm} />
               <MetricCell label="accuracy" value={`${score.accuracy}%`} />
-              <MetricCell label="errors" value={score.incorrect} muted />
+              <MetricCell
+                label="correct"
+                value={`${correctWords()} / ${wordsTyped(reference)} words`}
+              />
+              <MetricCell label="errors" value={wordsTyped(typed) - correctWords()} muted />
               <MetricCell
                 label={timed ? 'time' : 'elapsed'}
                 value={`${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, '0')}`}
@@ -955,8 +975,8 @@ export default function TypingClient({
               {isPeeking
                 ? 'peeking'
                 : isBlind
-                ? `${typed.length} typed`
-                : `${typed.length}/${reference.length}`}
+                ? `${wordsTyped(typed)} typed`
+                : `${wordsTyped(typed)}/${wordsTyped(reference)}`}
             </span>
           </div>
 
@@ -1030,7 +1050,7 @@ export default function TypingClient({
               : null}
             {!isPeeking && state === 'running' &&
               (timed
-                ? 'Focus on accuracy first.'
+                ? 'Type naturally — speed will follow.'
                 : 'Keep going — submission is automatic when you finish.')}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -1301,10 +1321,6 @@ function CustomTextDialog({
   onApply: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [pasteNotice, setPasteNotice] = useState<{
-    ok: boolean;
-    text: string;
-  } | null>(null);
   const cleaned = sanitizeForTyping(customInput);
   const cleanedLength = cleaned.length;
   const canStart = cleanedLength >= 40;
@@ -1320,41 +1336,11 @@ function CustomTextDialog({
   }, [onClose]);
 
   const pasteFromClipboard = async () => {
-    // The async clipboard API only exists in a secure context
-    // (https:// or localhost). On plain http:// it is undefined, so
-    // tell the user what to do instead of failing silently.
-    const clip =
-      typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
-
-    if (!clip?.readText) {
-      setPasteNotice({
-        ok: false,
-        text: 'This browser blocks clipboard access here. Click the box below and press Ctrl+V (⌘V on Mac).',
-      });
-      textareaRef.current?.focus();
-      return;
-    }
-
     try {
-      const text = await clip.readText();
-      if (!text.trim()) {
-        setPasteNotice({
-          ok: false,
-          text: 'Your clipboard is empty — copy some text first.',
-        });
-        return;
-      }
-      setCustomInput(text);
-      setPasteNotice({
-        ok: true,
-        text: `Pasted ${sanitizeForTyping(text).length} characters.`,
-      });
-      textareaRef.current?.focus();
+      const text = await navigator.clipboard.readText();
+      if (text) setCustomInput(text);
     } catch {
-      setPasteNotice({
-        ok: false,
-        text: 'Clipboard permission was denied. Click the box below and press Ctrl+V (⌘V on Mac).',
-      });
+      // Clipboard permission denied — the textarea still accepts Ctrl/Cmd+V.
       textareaRef.current?.focus();
     }
   };
@@ -1370,22 +1356,19 @@ function CustomTextDialog({
         className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border border-border bg-surface p-4 sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
-            <ClipboardPaste className="h-4 w-4" strokeWidth={1.7} />
-          </div>
-          <div className="min-w-0 flex-1">
+        <div className="mb-4 flex items-start justify-between">
+          <div>
             <h3 className="text-base font-semibold text-foreground">
-              Custom passage
+              Paste your own text
             </h3>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Paste or type English text. Line breaks and smart quotes are
-              cleaned up so the score stays accurate.
+            <p className="mt-1 text-sm text-muted-foreground">
+              English only. Line breaks and smart quotes are cleaned up so the
+              score stays accurate.
             </p>
           </div>
           <button
             onClick={onClose}
-            className="-mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -1410,13 +1393,6 @@ function CustomTextDialog({
           ref={textareaRef}
           value={customInput}
           onChange={(e) => setCustomInput(e.target.value)}
-          onKeyDown={(e) => {
-            // Ctrl/Cmd + Enter starts immediately.
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canStart) {
-              e.preventDefault();
-              onApply();
-            }
-          }}
           placeholder="Paste or type English text (at least 40 characters)…"
           rows={8}
           className="max-h-64 w-full resize-y overflow-auto rounded-md border border-border bg-background p-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
@@ -1426,57 +1402,30 @@ function CustomTextDialog({
           <span>
             {cleanedLength} chars (after cleaning) · min 40
           </span>
-          {canStart ? (
+          {canStart && (
             <span className="text-success">
               ~{recommendDuration(cleaned)}s suggested
             </span>
-          ) : (
-            <span>{Math.max(0, 40 - cleanedLength)} more needed</span>
           )}
         </div>
 
-        {pasteNotice && (
-          <p
-            role="status"
-            className={cn(
-              'mt-2 rounded-md border px-3 py-2 text-xs',
-              pasteNotice.ok
-                ? 'border-success/40 bg-success/10 text-foreground'
-                : 'border-warning/40 bg-warning/10 text-foreground'
-            )}
-          >
-            {pasteNotice.text}
-          </p>
-        )}
-
-        <label className="mt-4 flex items-start gap-2 text-sm text-foreground">
+        <label className="mt-4 flex items-center gap-2 text-sm text-foreground">
           <input
             type="checkbox"
             checked={customBlind}
             onChange={(e) => setCustomBlind(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-border bg-background accent-brand"
+            className="h-4 w-4 rounded border-border bg-background accent-brand"
           />
-          <span>
-            Hide the passage while typing
-            <span className="block text-xs text-muted-foreground">
-              Blind run — counted. Leave off to practise with the passage
-              visible.
-            </span>
-          </span>
+          Hide reference (type from memory — counted)
         </label>
 
-        <div className="mt-5 flex items-center justify-between gap-2 border-t border-border pt-4">
-          <span className="hidden text-[11px] text-muted-foreground sm:inline">
-            Ctrl/⌘ + Enter to start
-          </span>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={onApply} disabled={!canStart}>
-              Start typing
-            </Button>
-          </div>
+        <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={onApply} disabled={!canStart}>
+            Start
+          </Button>
         </div>
       </div>
     </div>
@@ -1616,11 +1565,11 @@ function CompletionPanel({
           detail: 'Keep practising to maintain this level.',
         }
       : {
-          title: 'Focus on accuracy — speed will follow.',
+          title: 'Type naturally — speed will follow.',
           detail:
             mode === 'free'
               ? 'Take a moment to slow down on tricky words.'
-              : 'Review the missed portion below.',
+              : 'See your word-by-word comparison below.',
         };
 
   return (
@@ -1648,7 +1597,7 @@ function CompletionPanel({
                 </>
               ) : (
                 <>
-                  <Eye className="h-3 w-3" /> Practice — not counted
+                  <Eye className="h-3 w-3" /> Practice — not scored
                 </>
               )}
             </span>
@@ -1693,8 +1642,8 @@ function CompletionPanel({
       {!counted && (
         <p className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
           {peeked
-            ? 'You previewed the reference during this attempt, so these numbers are for practice only and are not counted. Restart to record a clean blind run.'
-            : 'The passage was visible at the start of this run, so these numbers are for practice only and are not counted. Turn on blind mode to record a result.'}
+            ? 'You previewed the reference during this attempt, so these numbers are for practice only and are not scored. Restart to record a clean blind run.'
+            : 'The passage was visible at the start of this run, so these numbers are for practice only and are not scored. Turn on blind mode to record a result.'}
         </p>
       )}
 
@@ -1706,9 +1655,9 @@ function CompletionPanel({
               <span>Your typing</span>
               <span className="ml-auto inline-flex items-center gap-3">
                 <LegendSwatch
-                  className="bg-success/30"
+                  className="bg-background/30"
                   label="correct"
-                  borderClass="border-success/40"
+                  borderClass="border-border"
                 />
                 <LegendSwatch
                   className="bg-destructive/30"
@@ -1827,7 +1776,7 @@ function ReviewBlock({
   }
 
   return (
-    <div className="rounded-md border border-border bg-background p-4 font-mono text-[15px] leading-[1.9] whitespace-pre-wrap break-words sm:text-base">
+    <div className="rounded-md border border-border bg-background p-4 font-mono text-base leading-relaxed whitespace-pre-wrap break-words sm:text-lg">
       {chars.map((c, i) => {
         const display = c.ch === ' ' ? '\u00A0' : c.ch;
         return (
@@ -1836,11 +1785,11 @@ function ReviewBlock({
             className={cn(
               c.state === 'correct' && 'text-foreground',
               c.state === 'wrong' &&
-                'rounded-[2px] bg-destructive/20 text-destructive underline decoration-destructive/70 decoration-2 underline-offset-2',
+                'rounded-sm bg-destructive/20 text-destructive underline decoration-destructive/70 decoration-2 underline-offset-2',
               c.state === 'missed' &&
-                'text-muted-foreground underline decoration-warning/70 decoration-dotted decoration-2 underline-offset-2',
+                'text-warning underline decoration-warning/70 decoration-dotted decoration-2 underline-offset-2',
               c.state === 'overflow' &&
-                'rounded-[2px] bg-destructive/20 text-destructive line-through'
+                'rounded-sm bg-destructive/20 text-destructive line-through'
             )}
           >
             {display}
@@ -1855,37 +1804,34 @@ function ReviewBlock({
 type DiffKind = 'wrong' | 'missed' | 'extra';
 
 type DiffEntry = {
-  /** 0-based character position in the passage. */
+  /** 0-based word index in the passage. */
   index: number;
-  /** What the passage had there (null when the student added extra text). */
+  /** What word the passage had there (null when the student added extra text). */
   expected: string | null;
-  /** What the student typed (null when the character was skipped). */
+  /** What word the student typed (null when the word was skipped). */
   actual: string | null;
   kind: DiffKind;
 };
 
 /**
- * Build a readable list of every position where the student's typing
- * differs from the passage. Consecutive skipped characters are merged
- * into a single row so a long un-typed tail reads as one entry rather
- * than dozens.
+ * Build a readable list of every *word* where the student's typing
+ * differs from the passage. Consecutive missed words are merged into
+ * a single entry so a long un-typed tail reads as one entry.
  */
 function buildDiff(reference: string, typed: string): DiffEntry[] {
+  const passageWords = reference.trim().split(/\s+/).filter((w) => w.length > 0);
+  const typedWords = typed.trim().split(/\s+/).filter((w) => w.length > 0);
   const entries: DiffEntry[] = [];
-  const total = Math.max(reference.length, typed.length);
+  const total = Math.max(passageWords.length, typedWords.length);
 
   for (let i = 0; i < total; i++) {
-    const expected = reference[i];
-    const actual = typed[i];
+    const expected = passageWords[i];
+    const actual = typedWords[i];
 
     if (expected === undefined && actual !== undefined) {
       const prev = entries[entries.length - 1];
-      if (
-        prev &&
-        prev.kind === 'extra' &&
-        prev.index + (prev.actual?.length ?? 0) === i
-      ) {
-        prev.actual = (prev.actual ?? '') + actual;
+      if (prev && prev.kind === 'extra' && prev.index + 1 === i) {
+        prev.actual = (prev.actual ?? '') + ' ' + actual;
         continue;
       }
       entries.push({ index: i, expected: null, actual, kind: 'extra' });
@@ -1893,12 +1839,8 @@ function buildDiff(reference: string, typed: string): DiffEntry[] {
     }
     if (expected !== undefined && actual === undefined) {
       const prev = entries[entries.length - 1];
-      if (
-        prev &&
-        prev.kind === 'missed' &&
-        prev.index + (prev.expected?.length ?? 0) === i
-      ) {
-        prev.expected = (prev.expected ?? '') + expected;
+      if (prev && prev.kind === 'missed' && prev.index + 1 === i) {
+        prev.expected = (prev.expected ?? '') + ' ' + expected;
         continue;
       }
       entries.push({ index: i, expected, actual: null, kind: 'missed' });
@@ -1912,21 +1854,12 @@ function buildDiff(reference: string, typed: string): DiffEntry[] {
   return entries;
 }
 
-/** Render a single character so whitespace is visible. */
-function readableChar(ch: string) {
-  if (ch === ' ') return '\u2423';
-  if (ch === '\n') return '\u21B5';
-  if (ch === '\t') return '\u21E5';
-  return ch;
-}
-
 /**
- * One cell of the difference table.
+ * One cell of the difference table — shows whole words.
  *
- * Single characters are shown as a chip (with ␣ standing in for a
- * space). Longer runs are shown as a short, truncated quote so a long
- * skipped tail reads as one readable line instead of a wall of
- * single-character blocks.
+ * Words are shown as readable text with a short truncation for long
+ * entries so a long missed tail reads as one readable line instead
+ * of a wall of single-character blocks.
  */
 function DiffSnippet({
   value,
@@ -1946,23 +1879,7 @@ function DiffSnippet({
     );
   }
 
-  if (value.length === 1) {
-    return (
-      <span
-        className={cn(
-          'inline-flex min-w-[1.5rem] justify-center rounded border px-1 py-0.5 font-mono text-sm',
-          tone === 'missed' && 'border-warning/40 bg-warning/10 text-warning',
-          tone === 'wrong' &&
-            'border-destructive/40 bg-destructive/10 text-destructive',
-          tone === 'plain' && 'border-border bg-surface text-foreground'
-        )}
-      >
-        {readableChar(value)}
-      </span>
-    );
-  }
-
-  const MAX = 48;
+  const MAX = 60;
   const preview = value.slice(0, MAX);
 
   return (
@@ -2000,15 +1917,15 @@ function DiffTable({
   return (
     <div>
       <div className="mb-2 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        <span>What was there vs what you typed</span>
+        <span>What word was there vs what you typed</span>
         <span className="ml-auto font-mono tabular-nums">
-          {diffs.length} difference{diffs.length === 1 ? '' : 's'}
+          {diffs.length} word difference{diffs.length === 1 ? '' : 's'}
         </span>
       </div>
 
       {diffs.length === 0 ? (
         <p className="rounded-md border border-success/40 bg-success/10 px-3 py-4 text-sm text-foreground">
-          No differences — every character matched the passage.
+          No differences — every word matched the passage.
         </p>
       ) : (
         <div className="overflow-hidden rounded-md border border-border bg-background">
@@ -2026,7 +1943,7 @@ function DiffTable({
                 </tr>
               </thead>
               <tbody>
-                {shown.map((d) => (
+                {shown.filter((d) => d.kind !== 'missed').map((d) => (
                   <tr
                     key={`${d.index}-${d.kind}`}
                     className="border-b border-border/60 align-top last:border-0"
@@ -2055,7 +1972,7 @@ function DiffTable({
           </div>
           {hidden > 0 && (
             <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-              Showing the first {LIMIT} of {diffs.length} differences.
+              Showing the first {LIMIT} of {diffs.length} word differences.
             </p>
           )}
         </div>

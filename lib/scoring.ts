@@ -60,41 +60,38 @@ const safeMinutes = (elapsedMs: number): number => {
  * @param elapsedMs  Wall-clock time in ms since the user started typing.
  *                   Use 0 to compute "live" WPM (which returns 0).
  */
-/** Split text into words, collapsing whitespace. */
-function wordsOf(text: string): string[] {
-  return text.trim().split(/\s+/).filter((w) => w.length > 0);
-}
-
 /**
- * Compute the full score for a typing attempt using word-based
- * comparison. Each word is matched position-by-position against the
- * passage, so errors never cascade — one wrong word doesn't make
- * every word after it incorrect.
+ * Compute the full score for a typing attempt using the standard
+ * 5-characters-per-word convention (Monkeytype, keybr, etc.).
+ *
+ *   - Gross (Raw) WPM  = Total Typed Characters / 5 / Minutes
+ *   - Net WPM          = Correct Characters / 5 / Minutes
+ *   - Accuracy (%)     = Correct Characters / Total Typed Characters × 100
+ *
+ * Errors never cascade: each character is judged independently against
+ * the passage at the same position.
  */
 export function computeScore(
   passage: string,
   typed: string,
   elapsedMs: number
 ): ScoreResult {
-  const passageWords = wordsOf(passage);
-  const typedWords = wordsOf(typed);
-
+  const len = Math.min(typed.length, passage.length);
   let correct = 0;
-  const len = Math.min(passageWords.length, typedWords.length);
   for (let i = 0; i < len; i++) {
-    if (passageWords[i] === typedWords[i]) correct++;
+    if (typed[i] === passage[i]) correct++;
   }
 
-  const totalTyped = typedWords.length;
+  const totalTyped = typed.length;
   const incorrect = totalTyped - correct;
 
   const accuracy =
     totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
 
   const minutes = safeMinutes(elapsedMs);
-  const wpm = minutes > 0 ? Math.round(correct / minutes) : 0;
+  const wpm = minutes > 0 ? Math.round(correct / 5 / minutes) : 0;
   const rawWpm =
-    minutes > 0 ? Math.round(totalTyped / minutes) : 0;
+    minutes > 0 ? Math.round(totalTyped / 5 / minutes) : 0;
 
   return {
     typed: totalTyped,
