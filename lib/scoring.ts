@@ -46,7 +46,6 @@ export type ScoreResult = {
 };
 
 const MS_PER_MINUTE = 60_000;
-const CHARS_PER_WORD = 5;
 
 const safeMinutes = (elapsedMs: number): number => {
   if (elapsedMs <= 0) return 0;
@@ -61,28 +60,41 @@ const safeMinutes = (elapsedMs: number): number => {
  * @param elapsedMs  Wall-clock time in ms since the user started typing.
  *                   Use 0 to compute "live" WPM (which returns 0).
  */
+/** Split text into words, collapsing whitespace. */
+function wordsOf(text: string): string[] {
+  return text.trim().split(/\s+/).filter((w) => w.length > 0);
+}
+
+/**
+ * Compute the full score for a typing attempt using word-based
+ * comparison. Each word is matched position-by-position against the
+ * passage, so errors never cascade — one wrong word doesn't make
+ * every word after it incorrect.
+ */
 export function computeScore(
   passage: string,
   typed: string,
   elapsedMs: number
 ): ScoreResult {
-  const len = Math.min(typed.length, passage.length);
+  const passageWords = wordsOf(passage);
+  const typedWords = wordsOf(typed);
+
   let correct = 0;
+  const len = Math.min(passageWords.length, typedWords.length);
   for (let i = 0; i < len; i++) {
-    if (typed[i] === passage[i]) correct++;
+    if (passageWords[i] === typedWords[i]) correct++;
   }
-  const incorrect = len - correct;
-  const totalTyped = typed.length;
+
+  const totalTyped = typedWords.length;
+  const incorrect = totalTyped - correct;
 
   const accuracy =
     totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
 
   const minutes = safeMinutes(elapsedMs);
-  const wpm = minutes > 0 ? Math.round(correct / CHARS_PER_WORD / minutes) : 0;
+  const wpm = minutes > 0 ? Math.round(correct / minutes) : 0;
   const rawWpm =
-    minutes > 0
-      ? Math.round(totalTyped / CHARS_PER_WORD / minutes)
-      : 0;
+    minutes > 0 ? Math.round(totalTyped / minutes) : 0;
 
   return {
     typed: totalTyped,
