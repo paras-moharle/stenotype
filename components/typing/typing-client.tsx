@@ -1301,6 +1301,10 @@ function CustomTextDialog({
   onApply: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [pasteNotice, setPasteNotice] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
   const cleaned = sanitizeForTyping(customInput);
   const cleanedLength = cleaned.length;
   const canStart = cleanedLength >= 40;
@@ -1316,11 +1320,41 @@ function CustomTextDialog({
   }, [onClose]);
 
   const pasteFromClipboard = async () => {
+    // The async clipboard API only exists in a secure context
+    // (https:// or localhost). On plain http:// it is undefined, so
+    // tell the user what to do instead of failing silently.
+    const clip =
+      typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+
+    if (!clip?.readText) {
+      setPasteNotice({
+        ok: false,
+        text: 'This browser blocks clipboard access here. Click the box below and press Ctrl+V (⌘V on Mac).',
+      });
+      textareaRef.current?.focus();
+      return;
+    }
+
     try {
-      const text = await navigator.clipboard.readText();
-      if (text) setCustomInput(text);
+      const text = await clip.readText();
+      if (!text.trim()) {
+        setPasteNotice({
+          ok: false,
+          text: 'Your clipboard is empty — copy some text first.',
+        });
+        return;
+      }
+      setCustomInput(text);
+      setPasteNotice({
+        ok: true,
+        text: `Pasted ${sanitizeForTyping(text).length} characters.`,
+      });
+      textareaRef.current?.focus();
     } catch {
-      // Clipboard permission denied — the textarea still accepts Ctrl/Cmd+V.
+      setPasteNotice({
+        ok: false,
+        text: 'Clipboard permission was denied. Click the box below and press Ctrl+V (⌘V on Mac).',
+      });
       textareaRef.current?.focus();
     }
   };
@@ -1336,19 +1370,22 @@ function CustomTextDialog({
         className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border border-border bg-surface p-4 sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-start justify-between">
-          <div>
+        <div className="mb-4 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+            <ClipboardPaste className="h-4 w-4" strokeWidth={1.7} />
+          </div>
+          <div className="min-w-0 flex-1">
             <h3 className="text-base font-semibold text-foreground">
-              Paste your own text
+              Custom passage
             </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              English only. Line breaks and smart quotes are cleaned up so the
-              score stays accurate.
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Paste or type English text. Line breaks and smart quotes are
+              cleaned up so the score stays accurate.
             </p>
           </div>
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="-mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -1373,6 +1410,13 @@ function CustomTextDialog({
           ref={textareaRef}
           value={customInput}
           onChange={(e) => setCustomInput(e.target.value)}
+          onKeyDown={(e) => {
+            // Ctrl/Cmd + Enter starts immediately.
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canStart) {
+              e.preventDefault();
+              onApply();
+            }
+          }}
           placeholder="Paste or type English text (at least 40 characters)…"
           rows={8}
           className="max-h-64 w-full resize-y overflow-auto rounded-md border border-border bg-background p-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
@@ -1382,30 +1426,57 @@ function CustomTextDialog({
           <span>
             {cleanedLength} chars (after cleaning) · min 40
           </span>
-          {canStart && (
+          {canStart ? (
             <span className="text-success">
               ~{recommendDuration(cleaned)}s suggested
             </span>
+          ) : (
+            <span>{Math.max(0, 40 - cleanedLength)} more needed</span>
           )}
         </div>
 
-        <label className="mt-4 flex items-center gap-2 text-sm text-foreground">
+        {pasteNotice && (
+          <p
+            role="status"
+            className={cn(
+              'mt-2 rounded-md border px-3 py-2 text-xs',
+              pasteNotice.ok
+                ? 'border-success/40 bg-success/10 text-foreground'
+                : 'border-warning/40 bg-warning/10 text-foreground'
+            )}
+          >
+            {pasteNotice.text}
+          </p>
+        )}
+
+        <label className="mt-4 flex items-start gap-2 text-sm text-foreground">
           <input
             type="checkbox"
             checked={customBlind}
             onChange={(e) => setCustomBlind(e.target.checked)}
-            className="h-4 w-4 rounded border-border bg-background accent-brand"
+            className="mt-0.5 h-4 w-4 rounded border-border bg-background accent-brand"
           />
-          Hide reference (type from memory — counted)
+          <span>
+            Hide the passage while typing
+            <span className="block text-xs text-muted-foreground">
+              Blind run — counted. Leave off to practise with the passage
+              visible.
+            </span>
+          </span>
         </label>
 
-        <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={onApply} disabled={!canStart}>
-            Start
-          </Button>
+        <div className="mt-5 flex items-center justify-between gap-2 border-t border-border pt-4">
+          <span className="hidden text-[11px] text-muted-foreground sm:inline">
+            Ctrl/⌘ + Enter to start
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={onApply} disabled={!canStart}>
+              Start typing
+            </Button>
+          </div>
         </div>
       </div>
     </div>
