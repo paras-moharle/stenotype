@@ -13,7 +13,7 @@ export function StudentHeader({ title, description, action }: StudentHeaderProps
     <div className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <Link
-          href="/typing"
+          href="/student/typing"
           className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           <ExternalLink className="h-3 w-3" />
