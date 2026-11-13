@@ -1,18 +1,33 @@
+/**
+ * Prisma client — lazy, safe to import without a database.
+ *
+ * The CockroachDB client is only created on first *use*, never at
+ * module load time. This keeps `next build` working on hosts that
+ * don't set DATABASE_URL yet (the preview doesn't need a DB).
+ */
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
+let prismaClient: PrismaClient | null = null;
 
-const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL!,
-});
+export function getPrisma(): PrismaClient {
+  if (prismaClient) return prismaClient;
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({ adapter });
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "DATABASE_URL is not set — the database backend isn't connected yet. " +
+        "Preview features (typing, dictations, results) still work without it."
+    );
+  }
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+  const adapter = new PrismaPg({ connectionString });
+  prismaClient = new PrismaClient({ adapter });
+  return prismaClient;
 }
+
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop: string) {
+    return (getPrisma() as unknown as PrismaClient)[prop as keyof PrismaClient];
+  },
+});
