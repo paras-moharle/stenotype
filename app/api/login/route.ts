@@ -5,6 +5,7 @@ import {
   findAccount,
   signToken,
 } from '@/lib/auth-server';
+import { createSession } from '@/lib/sessions';
 
 export const runtime = 'nodejs';
 
@@ -34,8 +35,21 @@ export async function POST(req: Request) {
     );
   }
 
+  const token = signToken(user.email);
+
+  // Create/replace session — any previous session for this email is revoked.
+  const forwardedFor = req.headers.get('x-forwarded-for');
+  const ip = forwardedFor ? forwardedFor.split(',')[0].trim() : undefined;
+  createSession({
+    email: user.email,
+    token,
+    ttlSeconds: SESSION_MAX_AGE_SECONDS,
+    ip,
+    userAgent: req.headers.get('user-agent') ?? undefined,
+  });
+
   const res = NextResponse.json({ user });
-  res.cookies.set(SESSION_COOKIE, signToken(user.email), {
+  res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',

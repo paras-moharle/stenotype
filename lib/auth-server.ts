@@ -1,4 +1,9 @@
 import { createHmac, timingSafeEqual } from 'crypto';
+import {
+  createSession,
+  getSession,
+  revokeSessionByToken,
+} from '@/lib/sessions';
 
 // ─────────────────────────────────────────────────────────────
 // SERVER-ONLY auth module.
@@ -16,8 +21,8 @@ export type ServerUser = {
 
 type Account = ServerUser & { password: string };
 
-// Login is valid for 10 days (within the 7–15 day window).
-export const SESSION_MAX_AGE_SECONDS = 10 * 24 * 60 * 60;
+// Login is valid for 4 hours (short window, admin can kill-switch anytime).
+export const SESSION_MAX_AGE_SECONDS = 4 * 60 * 60;
 export const SESSION_COOKIE = 'stenotype_session';
 
 const AUTH_SECRET =
@@ -88,4 +93,23 @@ export function verifyToken(token: string): string | null {
     return null;
   }
   return Buffer.from(payload, 'base64url').toString();
+}
+
+/**
+ * Verify a session token and confirm it exists in the active session store.
+ * Returns the email if valid, null otherwise.
+ */
+export function verifySession(token: string): string | null {
+  const email = verifyToken(token);
+  if (!email) return null;
+  const session = getSession(token);
+  if (!session || session.email !== email) return null;
+  return email;
+}
+
+/**
+ * Revoke a session by its token (used on logout).
+ */
+export function revokeToken(token: string): void {
+  revokeSessionByToken(token);
 }

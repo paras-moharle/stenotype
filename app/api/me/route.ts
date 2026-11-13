@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import {
   SESSION_COOKIE,
   getUserByEmail,
-  verifyToken,
+  verifySession,
 } from '@/lib/auth-server';
 
 export const runtime = 'nodejs';
@@ -16,7 +16,7 @@ export async function GET() {
     return NextResponse.json({ user: null }, { status: 401 });
   }
 
-  const email = verifyToken(token);
+  const email = verifySession(token);
   if (!email) {
     return NextResponse.json({ user: null }, { status: 401 });
   }
