@@ -1,26 +1,200 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  /* ─── Rich Dark Foundation ─── */
+  /* Page background — deep warm near-black */
+  --color-background: #0d0c0a;
+  /* Elevated surface — cards, panels */
+  --color-surface: #151412;
+  /* Interactive surface hover */
+  --color-surface-hover: #1a1916;
+  /* Muted areas */
+  --color-muted: #181714;
+  /* Subtle borders */
+  --color-border: #2a2823;
+  /* Input backgrounds */
+  --color-input: #1a1916;
+
+  /* ─── Typography ─── */
+  /* Primary text — warm soft white */
+  --color-foreground: #f2f0e8;
+  /* Secondary text — comfortable muted gray */
+  --color-muted-foreground: #8a8780;
+  /* Tertiary text — dim but readable */
+  --color-foreground-dim: #5c5a54;
+
+  /* ─── Brand / Accent ─── */
+  /* Warm muted amber — StenoType identity */
+  --color-brand: #d4a84b;
+  --color-brand-foreground: #0d0c0a;
+  --color-brand-soft: #2a2418;
+  --color-brand-muted: #6b5a3a;
+  /* Focus ring */
+  --color-ring: #d4a84b;
+
+  /* ─── Semantic ─── */
+  --color-destructive: #c75050;
+  --color-destructive-foreground: #f2f0e8;
+  --color-success: #6ba368;
+  --color-success-foreground: #0d0c0a;
+  --color-warning: #d4a84b;
+  --color-warning-foreground: #0d0c0a;
+
+  /* ─── Legacy shadcn/ui compatibility ─── */
+  --color-card: #151412;
+  --color-card-foreground: #f2f0e8;
+  --color-popover: #151412;
+  --color-popover-foreground: #f2f0e8;
+  --color-primary: #f2f0e8;
+  --color-primary-foreground: #0d0c0a;
+  --color-secondary: #1a1916;
+  --color-secondary-foreground: #f2f0e8;
+  --color-accent: #1a1916;
+  --color-accent-foreground: #f2f0e8;
+
+  --radius: 0.375rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    background-color: var(--color-background);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    position: relative;
+  }
+  /* Subtle technical background detail — visible but subordinate to UI */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      /* Horizontal rule lines (notebook/stenography pad) */
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 63px,
+        rgba(212, 168, 75, 0.06) 63px,
+        rgba(212, 168, 75, 0.06) 64px
+      ),
+      /* Vertical center guide line */
+      linear-gradient(
+        to right,
+        transparent calc(50% - 0.5px),
+        rgba(212, 168, 75, 0.07) calc(50% - 0.5px),
+        rgba(212, 168, 75, 0.07) calc(50% + 0.5px),
+        transparent calc(50% + 0.5px)
+      ),
+      /* Curved stenography stroke — top right */
+      radial-gradient(
+        ellipse 360px 100px at 88% 12%,
+        rgba(212, 168, 75, 0.07) 0%,
+        transparent 65%
+      ),
+      /* Curved stroke — bottom left */
+      radial-gradient(
+        ellipse 320px 80px at 12% 88%,
+        rgba(212, 168, 75, 0.055) 0%,
+        transparent 65%
+      ),
+      /* Flowing curve — middle right */
+      radial-gradient(
+        ellipse 280px 60px at 95% 55%,
+        rgba(212, 168, 75, 0.045) 0%,
+        transparent 70%
+      );
+  }
+  /* Ensure all content sits above the background detail */
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-brand) 30%, transparent);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer utilities {
+  /* shadcn-compatible utility classes for compound color names */
+  .text-muted-foreground {
+    color: var(--color-muted-foreground);
+  }
+  .text-foreground-dim {
+    color: var(--color-foreground-dim);
+  }
+  .text-warning {
+    color: var(--color-warning);
+  }
+  .text-warning-foreground {
+    color: var(--color-warning-foreground);
+  }
+  .bg-surface {
+    background-color: var(--color-surface);
+  }
+  .bg-surface-hover {
+    background-color: var(--color-surface-hover);
+  }
+  .text-foreground-muted {
+    color: var(--color-muted-foreground);
+  }
+  .text-brand-soft {
+    color: var(--color-brand-soft);
+  }
+  .text-brand-muted {
+    color: var(--color-brand-muted);
+  }
+  .border-brand {
+    border-color: var(--color-brand);
+  }
+  .border-input {
+    border-color: var(--color-input);
+  }
+  .ring-ring {
+    --tw-ring-color: var(--color-ring);
+  }
+  .ring-offset-background {
+    --tw-ring-offset-color: var(--color-background);
+  }
+  .bg-brand {
+    background-color: var(--color-brand);
+  }
+  .text-brand-foreground {
+    color: var(--color-brand-foreground);
+  }
+}
+
+/* Typing cursor blink */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink {
+  animation: cursor-blink 1.1s steps(1) infinite;
+}
+
+/* Subtle fade-in for page content */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out both;
 }

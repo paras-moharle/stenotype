@@ -1,0 +1,527 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "cockroachdb"
+}
+
+//
+// ============================================================
+// ENUMS
+// ============================================================
+//
+
+enum UserRole {
+  STUDENT
+  ADMIN
+}
+
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum BatchStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum DictationCategory {
+  GENERAL
+  PROFESSIONAL
+  LEGAL
+}
+
+enum DictationStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AssignmentTargetType {
+  STUDENT
+  BATCH
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  EVALUATED
+}
+
+enum EvaluationErrorType {
+  MISSING
+  EXTRA
+  SUBSTITUTION
+  SPELLING
+  PUNCTUATION
+  CASING
+  WHITESPACE
+}
+
+enum FeeStatus {
+  PAID
+  PENDING
+  OVERDUE
+}
+
+enum ScheduleStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum TypingTestStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+//
+// ============================================================
+// BETTER AUTH USER
+// ============================================================
+// Better Auth will own the authentication lifecycle.
+// We keep the application role here because authorization is
+// application-level, not something the browser gets to decide.
+// Better Auth's CLI will later generate/verify its complete
+// auth schema (User/Session/Account/Verification).
+//
+
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  role          UserRole @default(STUDENT)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  studentProfile StudentProfile?
+
+  createdDictations Dictation[] @relation("DictationCreatedBy")
+
+  attempts Attempt[]
+
+  createdTypingTests TypingTest[] @relation("TypingTestCreatedBy")
+
+  typingAttempts TypingAttempt[]
+
+  fees Fee[] @relation("FeeStudent")
+
+  announcements Announcement[] @relation("AnnouncementCreatedBy")
+
+  createdSchedules Schedule[] @relation("ScheduleCreatedBy")
+
+  sessions Session[]
+  accounts Account[]
+}
+
+//
+// ============================================================
+// STUDENTS / BATCHES
+// ============================================================
+//
+
+model StudentProfile {
+  id     String        @id @default(uuid())
+  userId String        @unique
+  phone  String?
+  status StudentStatus @default(ACTIVE)
+  notes  String?
+
+  batchId String?
+  batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  assignments Assignment[]
+
+  attempts Attempt[]
+
+  fees Fee[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([batchId])
+  @@index([status])
+}
+
+model Batch {
+  id       String      @id @default(uuid())
+  name     String      @unique
+  schedule String
+  time     String
+  status   BatchStatus @default(ACTIVE)
+
+  students StudentProfile[]
+
+  assignments Assignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+//
+// ============================================================
+// DICTATIONS
+// ============================================================
+// Audio NEVER lives here.
+// audioObjectKey points to the private Cloudflare R2 object.
+//
+
+model Dictation {
+  id       String            @id @default(uuid())
+  title    String
+  category DictationCategory
+  status   DictationStatus   @default(DRAFT)
+
+  referenceTranscript String
+
+  audioObjectKey  String?
+  durationSeconds Int?
+
+  createdById String
+  createdBy   User   @relation("DictationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  assignments Assignment[]
+
+  schedules Schedule[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  @@index([status])
+  @@index([category])
+  @@index([createdById])
+}
+
+//
+// ============================================================
+// ASSIGNMENTS
+// ============================================================
+// An assignment targets either:
+// STUDENT -> studentId populated
+// BATCH   -> batchId populated
+// Application/server validation must enforce that exactly one
+// target is supplied.
+// We intentionally do not expose client-side authorization as
+// the source of truth.
+//
+
+model Assignment {
+  id String @id @default(uuid())
+
+  dictationId String
+  dictation   Dictation @relation(fields: [dictationId], references: [id], onDelete: Restrict)
+
+  targetType AssignmentTargetType
+
+  studentId String?
+  student   StudentProfile? @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  batchId String?
+  batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  availableFrom  DateTime
+  availableUntil DateTime?
+
+  allowReplay Boolean @default(true)
+  blindMode   Boolean @default(true)
+
+  assignedAt DateTime @default(now())
+
+  attempts Attempt[]
+
+  @@index([dictationId])
+  @@index([studentId])
+  @@index([batchId])
+  @@index([targetType])
+}
+
+//
+// ============================================================
+// DICTATION ATTEMPTS
+// ============================================================
+//
+
+model Attempt {
+  id String @id @default(uuid())
+
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  submittedText String
+
+  elapsedMs Int
+  status    AttemptStatus @default(IN_PROGRESS)
+
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  evaluation EvaluationResult?
+
+  errors EvaluationError[]
+  user   User?             @relation(fields: [userId], references: [id])
+  userId String?
+
+  @@index([assignmentId])
+  @@index([studentId, createdAt])
+  @@index([status])
+}
+
+//
+// ============================================================
+// EVALUATION
+// ============================================================
+//
+
+model EvaluationResult {
+  id String @id @default(uuid())
+
+  attemptId String  @unique
+  attempt   Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  overallAccuracy   Float
+  wordAccuracy      Float
+  characterAccuracy Float
+
+  expectedWordCount Int
+  typedWordCount    Int
+
+  correctCount               Int
+  missingCount               Int
+  extraCount                 Int
+  substitutionCount          Int
+  spellingErrorCount         Int
+  punctuationDifferenceCount Int
+
+  correctCharacterCount   Int
+  incorrectCharacterCount Int
+
+  wpm Float
+
+  createdAt DateTime @default(now())
+
+  @@index([overallAccuracy])
+  @@index([createdAt])
+}
+
+model EvaluationError {
+  id String @id @default(uuid())
+
+  attemptId String
+  attempt   Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  type EvaluationErrorType
+
+  position Int
+
+  expected String?
+  actual   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([attemptId])
+  @@index([attemptId, position])
+  @@index([type])
+}
+
+//
+// ============================================================
+// TYPING SUITE
+// ============================================================
+//
+
+model TypingTest {
+  id String @id @default(uuid())
+
+  title    String
+  category DictationCategory
+  text     String
+
+  status TypingTestStatus @default(DRAFT)
+
+  createdById String
+  createdBy   User   @relation("TypingTestCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  attempts TypingAttempt[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  @@index([status])
+  @@index([category])
+}
+
+model TypingAttempt {
+  id String @id @default(uuid())
+
+  typingTestId String
+  typingTest   TypingTest @relation(fields: [typingTestId], references: [id], onDelete: Restrict)
+
+  studentId String
+  student   User   @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  typedText String
+
+  elapsedMs Int
+
+  wpm      Float
+  accuracy Float
+
+  correctCharacters   Int
+  incorrectCharacters Int
+
+  completed Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([typingTestId])
+  @@index([studentId, createdAt])
+}
+
+//
+// ============================================================
+// FEES
+// ============================================================
+//
+
+model Fee {
+  id String @id @default(uuid())
+
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  amount  Int
+  dueDate DateTime
+
+  status FeeStatus @default(PENDING)
+
+  paidDate DateTime?
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recordedById String?
+  recordedBy   User?   @relation("FeeStudent", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+//
+// ============================================================
+// SCHEDULE
+// ============================================================
+//
+
+model Schedule {
+  id String @id @default(uuid())
+
+  dictationId String
+  dictation   Dictation @relation(fields: [dictationId], references: [id], onDelete: Restrict)
+
+  audience String
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  status ScheduleStatus @default(UPCOMING)
+
+  createdById String
+  createdBy   User   @relation("ScheduleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dictationId])
+  @@index([startsAt])
+  @@index([status])
+}
+
+//
+// ============================================================
+// ANNOUNCEMENTS
+// ============================================================
+//
+
+model Announcement {
+  id String @id @default(uuid())
+
+  text String
+
+  published Boolean @default(true)
+
+  createdById String
+  createdBy   User   @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published, createdAt])
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
