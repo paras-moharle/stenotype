@@ -1,8 +1,9 @@
 import { StudentCta, StudentStatusBadge } from '@/components/student/student-header';
 import { StudentGreeting } from '@/components/student/student-greeting';
 import { assignedDictations } from '@/lib/student-data';
+import { mockDictations } from '@/lib/dictation-transcripts';
 import Link from 'next/link';
-import { Headphones, BarChart3, Keyboard, Clock } from 'lucide-react';
+import { Headphones, BarChart3, Keyboard, AlignLeft } from 'lucide-react';
 
 export default function StudentDashboardPage() {
   const now = new Date();
@@ -12,6 +13,10 @@ export default function StudentDashboardPage() {
         new Date(d.availableFrom) <= now && new Date(d.availableUntil) >= now
     )
     .slice(0, 6);
+  const wordCount = (id: string) => {
+    const t = mockDictations.find((m) => m.id === id)?.referenceTranscript ?? '';
+    return t.split(/\s+/).filter(Boolean).length;
+  };
 
   return (
     <div className="space-y-10">
@@ -80,8 +85,8 @@ export default function StudentDashboardPage() {
                       {d.title}
                     </p>
                     <p className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {d.duration} · {d.category}
+                      <AlignLeft className="h-3 w-3" />
+                      {wordCount(d.id)} words · {d.category}
                     </p>
                   </div>
                   <StudentStatusBadge status={d.status} />

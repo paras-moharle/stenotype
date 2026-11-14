@@ -133,24 +133,6 @@ export function buildCharacterMap(
 }
 
 /**
- * Update the typed-string when a single new character is added.
- * Validates against the passage and enforces the "no typing past
- * the end" rule.
- */
-export function applyKeypress(
-  passage: string,
-  previous: string,
-  nextChar: string
-): string {
-  if (previous.length >= passage.length) return previous;
-  // Reject control characters (e.g. paste of newlines, tabs).
-  if (nextChar === '' || nextChar === '\n' || nextChar === '\t') {
-    return previous;
-  }
-  return previous + nextChar;
-}
-
-/**
  * Update the typed-string when the user presses backspace.
  * Simply drops the last character — the character map will
  * automatically re-classify the truncated tail.
@@ -158,30 +140,4 @@ export function applyKeypress(
 export function applyBackspace(typed: string): string {
   if (typed.length === 0) return typed;
   return typed.slice(0, -1);
-}
-
-/**
- * Replace a paste. This is the smart paste used for the
- * "paste your own passage" feature (class-only / future).
- *
- * Returns the *correct* typed-string that should result from
- * pasting `pasted`, where the user effectively "types" the
- * pasted content character-by-character. The engine then
- * measures accuracy against the actual reference passage.
- *
- * Why not just accept the pasted string verbatim?
- * Because every character is still validated against the
- * passage — pasting doesn't bypass per-character checking.
- */
-export function applyPaste(
-  passage: string,
-  previous: string,
-  pasted: string
-): string {
-  // Normalise the paste: strip newlines, tabs, and other
-  // whitespace that the user couldn't have typed normally.
-  const cleaned = pasted.replace(/[\r\n\t]+/g, ' ');
-  const remaining = passage.length - previous.length;
-  if (remaining <= 0) return previous;
-  return previous + cleaned.slice(0, remaining);
 }

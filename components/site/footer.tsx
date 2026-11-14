@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Github } from 'lucide-react';
 
 const footerLinks = [
-  { href: '/typing', label: 'Typing' },
+  { href: '/', label: 'Typing practice' },
   { href: '/classes', label: 'Classes' },
   { href: '/about', label: 'About' },
 ];

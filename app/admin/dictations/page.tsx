@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Plus, Upload, X, FileAudio, Save } from 'lucide-react';
+import { Plus, Upload, X, FileAudio } from 'lucide-react';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
 import { AdminStatusBadge } from '@/components/admin/admin-status-badge';

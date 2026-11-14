@@ -1,5 +1,6 @@
 import { Navbar } from '@/components/site/navbar';
 import { Footer } from '@/components/site/footer';
+import { PreviewBanner } from '@/components/site/preview-banner';
 
 export default function PublicLayout({
   children,
@@ -8,10 +9,7 @@ export default function PublicLayout({
 }) {
   return (
     <>
-      <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800">
-        🚧 Preview build — saved results, audio dictations, and accounts are
-        under progress. Typing practice works now.
-      </div>
+      <PreviewBanner />
       <Navbar />
       <main className="flex-1">{children}</main>
       <Footer />

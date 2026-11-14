@@ -1,6 +1,5 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import {
-  createSession,
   getSession,
   revokeSessionByToken,
 } from '@/lib/sessions';
@@ -25,24 +24,41 @@ type Account = ServerUser & { password: string };
 export const SESSION_MAX_AGE_SECONDS = 4 * 60 * 60;
 export const SESSION_COOKIE = 'stenotype_session';
 
-const AUTH_SECRET =
-  process.env.AUTH_SECRET ?? 'change-me-in-production-please';
+/**
+ * Required environment variable — auth fails loudly instead of
+ * silently falling back to demo credentials. If booting in
+ * production without these set, this is a misconfiguration, not
+ * something to paper over.
+ */
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `Missing required environment variable ${name}. ` +
+        `Set ${name} in .env (local dev) or your hosting provider's ` +
+        `project settings (production). Demo fallbacks were removed on purpose.`
+    );
+  }
+  return value;
+}
+
+const AUTH_SECRET = requiredEnv('AUTH_SECRET');
 
 function accounts(): Account[] {
   return [
     {
       id: 'u1',
       name: 'Abhijeet Chahare',
-      email: process.env.STUDENT_EMAIL ?? 'abhijeet@stenotype.test',
+      email: requiredEnv('STUDENT_EMAIL'),
       role: 'student',
-      password: process.env.STUDENT_PASSWORD ?? 'stenotype123',
+      password: requiredEnv('STUDENT_PASSWORD'),
     },
     {
       id: 'u2',
       name: 'Paras Moharle',
-      email: process.env.ADMIN_EMAIL ?? 'paras@stenotype.test',
+      email: requiredEnv('ADMIN_EMAIL'),
       role: 'admin',
-      password: process.env.ADMIN_PASSWORD ?? 'stenotype123',
+      password: requiredEnv('ADMIN_PASSWORD'),
     },
   ];
 }

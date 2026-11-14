@@ -4,9 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   Headphones,
-  Play,
   ArrowRight,
-  Info,
   ChevronDown,
   ChevronUp,
   Keyboard,
@@ -20,7 +18,6 @@ import { mockDictations } from '@/lib/dictation-transcripts';
 import { cn } from '@/lib/utils';
 
 export default function StudentDictationsPage() {
-  const [notice, setNotice] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const transcripts = useMemo(() => {
@@ -33,29 +30,19 @@ export default function StudentDictationsPage() {
     <div className="space-y-8">
       <StudentHeader
         title="My dictations"
-        description="Demo dictations to try blind-mode typing. Audio playback is under progress."
+        description="Read a passage, then type it blind. Audio dictations are being rebuilt around YouTube and are coming later."
       />
 
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
         <p className="text-sm text-amber-800 font-medium">
-          🚧 Demo dictations — audio is not playable yet.
+          🚧 Demo dictations — type the transcript below in blind mode.
         </p>
         <p className="mt-1 text-xs text-amber-700">
-          These are sample records. The text below is exactly what you will type.
-          Hit <span className="font-medium">Try typing</span> to practise it in
-          blind mode. Results are session-only and cleared on refresh.
+          The text under each card is exactly what you will type. Hit{' '}
+          <span className="font-medium">Try typing</span> to practise it.
+          Results are session-only and cleared on refresh.
         </p>
       </div>
-
-      {notice && (
-        <div
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-border bg-surface px-4 py-3 text-sm text-foreground"
-        >
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
-          <span>{notice}</span>
-        </div>
-      )}
 
       <section>
         <div className="mb-3 flex items-center gap-3">
@@ -91,17 +78,9 @@ export default function StudentDictationsPage() {
                 <dl className="mt-3 grid grid-cols-2 gap-y-1.5 text-sm">
                   <dt className="text-muted-foreground">Category</dt>
                   <dd className="text-right text-foreground">{d.category}</dd>
-                  <dt className="text-muted-foreground">Duration</dt>
-                  <dd className="text-right font-mono text-foreground">
-                    {d.duration}
-                  </dd>
-                  <dt className="text-muted-foreground">Audio</dt>
-                  <dd className="text-right font-mono text-amber-700">
-                    not available
-                  </dd>
                   <dt className="text-muted-foreground">Length</dt>
                   <dd className="text-right font-mono text-foreground">
-                    {transcript.length} chars
+                    {transcript.split(/\s+/).filter(Boolean).length} words
                   </dd>
                 </dl>
 
@@ -132,20 +111,7 @@ export default function StudentDictationsPage() {
                   </p>
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setNotice(
-                        `"${d.title}" is a demo record — audio playback is under progress and not available yet. Use "Try typing" to practise the transcript instead.`
-                      )
-                    }
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <Play className="h-3.5 w-3.5" />
-                    Play audio
-                  </button>
-
+                <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
                   <Link
                     href={`/student/typing?mode=dictation&dictationId=${d.id}`}
                     className="inline-flex items-center gap-1.5 rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground transition-colors hover:bg-brand/90"

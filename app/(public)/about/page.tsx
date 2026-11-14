@@ -10,11 +10,12 @@ export default function AboutPage() {
           StenoType
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-muted-foreground text-balance">
-          A focused digital practice platform for stenography students.
+          A focused typing-practice platform for stenography students.
         </p>
         <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
-          Built to extend dictation, transcription, and typing practice between
-          your regular stenography classes.
+          The home page is the test — open it, pick a category and duration,
+          and type. No dashboards in the way, no marketing: just passages,
+          honest scoring, and dictation practice between your regular classes.
         </p>
       </div>
 
@@ -61,7 +62,7 @@ export default function AboutPage() {
 
         <div className="mt-16 text-center">
           <Button asChild size="lg" className="group">
-            <Link href="/typing">
+            <Link href="/">
               Start Practicing
               <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </Link>

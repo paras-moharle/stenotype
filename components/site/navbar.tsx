@@ -10,7 +10,6 @@ import { useAuth } from '@/lib/use-auth';
 
 const navLinks = [
   { href: '/', label: 'Home' },
-  { href: '/typing', label: 'Typing' },
   { href: '/classes', label: 'Classes' },
   { href: '/about', label: 'About' },
 ];
@@ -97,14 +96,14 @@ export function Navbar() {
               </button>
             </div>
           ) : (
-            <>
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/mock-login">Sign in</Link>
-              </Button>
-              <Button asChild size="sm">
-                <Link href="/typing">Start Practicing</Link>
-              </Button>
-            </>
+            <Link
+              href="/login"
+              aria-label="Sign in"
+              title="Sign in"
+              className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <User className="h-4.5 w-4.5" strokeWidth={1.5} />
+            </Link>
           )}
         </div>
 
@@ -169,7 +168,7 @@ export function Navbar() {
               </button>
             ) : (
               <Button asChild size="sm" className="mt-2">
-                <Link href="/mock-login" onClick={() => setMobileOpen(false)}>
+                <Link href="/login" onClick={() => setMobileOpen(false)}>
                   Sign in
                 </Link>
               </Button>

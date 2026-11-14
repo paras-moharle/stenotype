@@ -57,10 +57,10 @@ export const amountSchema = z
   .min(0, 'Amount cannot be negative')
   .max(1_00_00_000, 'Amount is too large');
 
-/* ─── Auth (mock login + future Better Auth) ────────────── */
+/* ─── Auth (login + future Better Auth) ─────────────────── */
 
 /**
- * The mock login form on `/mock-login` and the future
+ * The sign-in form on `/login` and the future
  * Better Auth sign-in API route share this schema.
  */
 export const loginSchema = z.object({
@@ -153,8 +153,14 @@ export const typingPassageSchema = z.object({
   category: dictationCategorySchema,
   text: z
     .string()
-    .min(40, 'Passage must be at least 40 characters')
-    .max(2_000, 'Passage is too long'),
+    .refine(
+      (t) => t.trim().split(/\s+/).filter(Boolean).length >= 10,
+      'Passage must be at least 10 words'
+    )
+    .refine(
+      (t) => t.trim().split(/\s+/).filter(Boolean).length <= 500,
+      'Passage is too long'
+    ),
   status: dictationStatusSchema.default('Draft'),
 });
 export type TypingPassageInput = z.infer<typeof typingPassageSchema>;
@@ -168,8 +174,14 @@ export type TypingPassageInput = z.infer<typeof typingPassageSchema>;
 export const customPassageSchema = z.object({
   text: z
     .string()
-    .min(40, 'Paste at least 40 characters of text')
-    .max(10_000, 'Text is too long (10,000 character maximum)'),
+    .refine(
+      (t) => t.trim().split(/\s+/).filter(Boolean).length >= 10,
+      'Paste at least 10 words of text'
+    )
+    .refine(
+      (t) => t.trim().split(/\s+/).filter(Boolean).length <= 2_000,
+      'Text is too long'
+    ),
   title: z.string().max(120).optional(),
 });
 export type CustomPassageInput = z.infer<typeof customPassageSchema>;

@@ -7,7 +7,7 @@ import {
   BarChart3,
   IndianRupee,
   Calendar,
-  FileText,
+
   Settings,
   BookOpen,
 } from 'lucide-react';

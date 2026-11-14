@@ -16,7 +16,12 @@ export type SessionResult = {
   practice: string;
   category: 'General' | 'Legal' | 'Professional';
   wpm: number;
+  rawWpm: number;
   accuracy: number;
+  /** Words typed correctly (position-wise match). */
+  correctWords: number;
+  /** Total words in the reference passage. */
+  totalWords: number;
   errors: number;
   duration: string;
   date: string;

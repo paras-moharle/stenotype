@@ -16,7 +16,7 @@ export default function AdminLayout({
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) {
-      router.replace('/mock-login');
+      router.replace('/login');
     } else if (user?.role !== 'admin') {
       router.replace('/student/dashboard');
     }

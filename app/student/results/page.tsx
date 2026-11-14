@@ -110,13 +110,19 @@ export default function StudentResultsPage() {
                       WPM
                     </th>
                     <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Raw WPM
+                    </th>
+                    <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                       Accuracy
+                    </th>
+                    <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Correct words
                     </th>
                     <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                       Errors
                     </th>
                     <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                      Duration
+                      Time
                     </th>
                   </tr>
                 </thead>
@@ -140,8 +146,14 @@ export default function StudentResultsPage() {
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-foreground">
                         {r.wpm}
                       </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-muted-foreground">
+                        {r.rawWpm}
+                      </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-foreground">
                         {r.accuracy}%
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-foreground">
+                        {r.correctWords}/{r.totalWords}
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-muted-foreground">
                         {r.errors}

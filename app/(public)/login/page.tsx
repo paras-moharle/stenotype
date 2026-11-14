@@ -6,7 +6,7 @@ import { Eye, EyeOff, ArrowLeft, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/use-auth';
 
-export default function MockLoginPage() {
+export default function LoginPage() {
   const { user, isAuthenticated, isLoading, signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -124,7 +124,7 @@ export default function MockLoginPage() {
         <p className="mt-6 text-center text-xs text-muted-foreground">
           Just want to try typing?{' '}
           <Link
-            href="/typing"
+            href="/"
             className="font-medium text-brand transition-colors hover:text-brand/80"
           >
             Start practising without signing in

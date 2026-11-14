@@ -1,70 +1,25 @@
 import Link from 'next/link';
-import {
-  Headphones,
-  PenLine,
-  Scale,
-  FileText,
-  Briefcase,
-  ArrowRight,
-  Repeat,
-} from 'lucide-react';
+import { ArrowRight, Keyboard, EyeOff, Scale, FileText, Briefcase } from 'lucide-react';
 import { PageHeader } from '@/components/site/page-header';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 
-const classCategories = [
-  {
-    icon: Headphones,
-    title: 'Dictation',
-    description:
-      'Listen to dictated passages and practice writing them in shorthand.',
-  },
-  {
-    icon: PenLine,
-    title: 'Transcription',
-    description:
-      'Transcribe your shorthand notes back into accurate English.',
-  },
+const categories = [
   {
     icon: Scale,
-    title: 'Legal Dictation',
+    title: 'Legal',
     description:
-      'Practice with legal terminology, courtroom language, and formal proceedings.',
-  },
-  {
-    icon: FileText,
-    title: 'General Dictation',
-    description:
-      'Practice clear everyday English across a range of subjects and situations.',
+      'Courtroom language — hearings, affidavits, submissions, and formal proceedings.',
   },
   {
     icon: Briefcase,
-    title: 'Professional Dictation',
+    title: 'Professional',
     description:
-      'Practice office and business language, including correspondence, reports, and meeting minutes.',
-  },
-];
-
-const practiceFlow = [
-  {
-    step: '01',
-    title: 'Attend classes',
-    description: 'Learn shorthand and dictation through your regular classes.',
+      'Office and business English — reports, correspondence, agendas, and minutes.',
   },
   {
-    step: '02',
-    title: 'Practice on StenoType',
-    description: 'Reinforce classwork with daily dictation, transcription, and typing.',
-  },
-  {
-    step: '03',
-    title: 'Track progress',
-    description: 'Monitor speed, accuracy, and practice results over time.',
-  },
-  {
-    step: '04',
-    title: 'Repeat',
-    description: 'Consistent practice between classes builds speed and accuracy.',
+    icon: FileText,
+    title: 'General',
+    description:
+      'Clear everyday English across a range of everyday subjects and situations.',
   },
 ];
 
@@ -73,105 +28,92 @@ export default function ClassesPage() {
     <div className="container-page py-12 lg:py-16">
       <PageHeader
         eyebrow="Classes"
-        title="Stenography classes and dictation practice"
-        description="Attend your regular stenography classes, then use StenoType to practice dictation, transcription, and typing between sessions."
+        title="Practice between classes"
+        description="StenoType is the companion to your regular stenography classes. Your teacher assigns the dictations; you come here to type."
       />
 
-      {/* Category cards */}
-      <div className="mt-14 grid gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2 lg:grid-cols-5">
-        {classCategories.map((cat) => (
-          <div key={cat.title} className="bg-card p-6 lg:p-5">
-            <cat.icon className="mb-4 h-5 w-5 text-brand" strokeWidth={1.5} />
-            <h3 className="text-base font-semibold text-foreground">
-              {cat.title}
+      {/* How practice works — the three real steps */}
+      <div className="mt-12 grid gap-4 sm:grid-cols-3">
+        {[
+          {
+            icon: Keyboard,
+            title: 'Open a dictation',
+            description:
+              'Each assigned dictation is a passage. You type it in blind mode — the text is hidden until you finish.',
+          },
+          {
+            icon: EyeOff,
+            title: 'Type it blind',
+            description:
+              'No peeking: you work from memory or your shorthand notes, exactly like a real dictation exam.',
+          },
+          {
+            icon: ArrowRight,
+            title: 'Compare word by word',
+            description:
+              'After submitting you get WPM, accuracy, errors, and a word-by-word diff against the reference.',
+          },
+        ].map((step, i) => (
+          <div key={step.title} className="rounded-lg border border-border bg-card p-6">
+            <span className="font-mono text-xs text-muted-foreground">
+              0{i + 1}
+            </span>
+            <step.icon
+              className="mt-3 h-5 w-5 text-brand"
+              strokeWidth={1.5}
+            />
+            <h3 className="mt-3 text-base font-semibold text-foreground">
+              {step.title}
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              {cat.description}
+              {step.description}
             </p>
           </div>
         ))}
       </div>
 
-      {/* Practice flow */}
-      <section className="mt-16">
-        <div className="mb-8 max-w-xl">
-          <p className="mb-3 text-xs font-medium uppercase tracking-widest text-brand">
-            How it works
-          </p>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-            Physical classes and StenoType, together
-          </h2>
-        </div>
-
-        <div className="grid gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2 lg:grid-cols-4">
-          {practiceFlow.map((item, i) => (
-            <div key={item.step} className="bg-card p-7">
-              <div className="mb-5 flex items-center justify-between">
-                <span className="font-mono text-sm font-medium text-muted-foreground">
-                  {item.step}
-                </span>
-                {i === 3 && (
-                  <Repeat className="h-4 w-4 text-brand" strokeWidth={1.5} />
-                )}
-              </div>
-              <h3 className="text-sm font-semibold text-foreground">
-                {item.title}
+      {/* Dictation categories — the same ones used everywhere in the app */}
+      <section className="mt-14">
+        <h2 className="text-xl font-semibold tracking-tight text-foreground">
+          Dictation categories
+        </h2>
+        <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+          Every passage — in class dictations and free practice alike — belongs
+          to one of three categories, matching what stenography courses cover.
+        </p>
+        <div className="mt-6 grid gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3">
+          {categories.map((cat) => (
+            <div key={cat.title} className="bg-card p-6">
+              <cat.icon className="mb-4 h-5 w-5 text-brand" strokeWidth={1.5} />
+              <h3 className="text-base font-semibold text-foreground">
+                {cat.title}
               </h3>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                {item.description}
+                {cat.description}
               </p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Relationship */}
-      <section className="mt-16">
-        <Card className="border-border bg-card p-8 shadow-none lg:p-12">
-          <div className="grid gap-10 lg:grid-cols-2">
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight text-foreground">
-                Classes and StenoType
-              </h2>
-              <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-                Physical classes teach the foundations. StenoType gives you a
-                place to practice dictation, transcription and typing between
-                sessions.
-              </p>
-            </div>
-            <div className="space-y-3">
-              {[
-                'Consistent daily practice between class sessions',
-                'The same dictation categories covered in class',
-                'Track WPM, accuracy, and errors to find what needs work',
-              ].map((item) => (
-                <div
-                  key={item}
-                  className="flex items-start gap-3 rounded-lg border border-border bg-background p-4"
-                >
-                  <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-                  <p className="text-sm text-muted-foreground">{item}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
-      </section>
-
-      {/* CTA */}
-      <section className="mt-16 rounded-lg border border-border bg-muted/30 p-10 text-center lg:p-14">
+      {/* Free practice — always available, no login needed */}
+      <section className="mt-14 rounded-lg border border-border bg-muted/30 p-8 lg:p-10">
         <h2 className="text-xl font-semibold tracking-tight text-foreground">
-          Ready to start practicing?
+          Free practice, no login needed
         </h2>
-        <p className="mt-3 text-sm text-muted-foreground">
-          Try the typing experience and see how StenoType fits into your routine.
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          The home page is a full typing test — pick a category and a duration
+          and start typing immediately. Passages are 50–100 words of coherent
+          English. Use it to warm up before class or to build raw speed between
+          dictations.
         </p>
-        <Button asChild size="lg" className="mt-6 group">
-          <Link href="/typing">
-            Start Practicing
-            <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-          </Link>
-        </Button>
+        <Link
+          href="/"
+          className="mt-6 inline-flex items-center gap-1.5 rounded-md bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand/90"
+        >
+          Open the typing test
+          <ArrowRight className="h-4 w-4" />
+        </Link>
       </section>
     </div>
   );

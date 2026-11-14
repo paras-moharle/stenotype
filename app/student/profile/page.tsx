@@ -92,7 +92,7 @@ function Row({
         <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           {label}
         </p>
-        <p className="text-sm text-foreground capitalize">{value}</p>
+        <p className="text-sm text-foreground">{value}</p>
       </div>
     </div>
   );

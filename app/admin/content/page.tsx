@@ -88,7 +88,7 @@ export default function AdminContentPage() {
   };
 
   const autoGenerate = () => {
-    const generated = generatePassage({ category: form.category, sentences: 4 });
+    const generated = generatePassage({ category: form.category, targetWords: 60 });
     update('text', generated);
     if (!form.title) update('title', `Auto-generated ${form.category} passage`);
   };
@@ -110,7 +110,7 @@ export default function AdminContentPage() {
         id: `tp${Date.now()}`,
         title: form.title,
         category: form.category,
-        length: form.text.length,
+        length: form.text.trim().split(/\s+/).filter(Boolean).length,
         status: form.status,
       },
       ...prev,
@@ -413,7 +413,10 @@ export default function AdminContentPage() {
                     />
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>
-                        {form.text.length} characters · minimum 40
+                        {
+                          form.text.trim().split(/\s+/).filter(Boolean).length
+                        }{' '}
+                        words · minimum 10
                       </span>
                       <button
                         type="button"
@@ -476,7 +479,7 @@ export default function AdminContentPage() {
                   header: 'Length',
                   render: (t) => (
                     <span className="font-mono tabular-nums text-foreground">
-                      {t.length} chars
+                      {t.length} words
                     </span>
                   ),
                 },

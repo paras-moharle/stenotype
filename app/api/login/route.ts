@@ -6,10 +6,25 @@ import {
   signToken,
 } from '@/lib/auth-server';
 import { createSession } from '@/lib/sessions';
+import {
+  checkRateLimit,
+  resetRateLimit,
+  clientIpFrom,
+} from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
+  // Brute-force guard: 5 attempts per 15 minutes per IP.
+  const ip = clientIpFrom(req);
+  const limit = checkRateLimit(ip);
+  if (!limit.ok) {
+    return NextResponse.json(
+      { error: 'Too many sign-in attempts. Try again in a few minutes.' },
+      { status: 429, headers: { 'Retry-After': String(limit.retryAfterSeconds) } }
+    );
+  }
+
   let body: { email?: string; password?: string };
   try {
     body = await req.json();
@@ -37,9 +52,10 @@ export async function POST(req: Request) {
 
   const token = signToken(user.email);
 
+  // Successful login clears the rate-limit window for this IP.
+  resetRateLimit(ip);
+
   // Create/replace session — any previous session for this email is revoked.
-  const forwardedFor = req.headers.get('x-forwarded-for');
-  const ip = forwardedFor ? forwardedFor.split(',')[0].trim() : undefined;
   createSession({
     email: user.email,
     token,

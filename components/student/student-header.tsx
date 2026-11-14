@@ -13,7 +13,7 @@ export function StudentHeader({ title, description, action }: StudentHeaderProps
     <div className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <Link
-          href="/student/typing"
+          href="/"
           className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           <ExternalLink className="h-3 w-3" />
@@ -27,27 +27,6 @@ export function StudentHeader({ title, description, action }: StudentHeaderProps
         )}
       </div>
       {action && <div className="flex items-center gap-2">{action}</div>}
-    </div>
-  );
-}
-
-interface StudentStatProps {
-  label: string;
-  value: string | number;
-  hint?: string;
-  className?: string;
-}
-
-export function StudentStat({ label, value, hint, className }: StudentStatProps) {
-  return (
-    <div className={cn('rounded-lg border border-border bg-surface p-5', className)}>
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-2 font-mono text-3xl font-semibold tabular-nums text-foreground">
-        {value}
-      </p>
-      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

@@ -17,7 +17,7 @@ export default function StudentLayout({
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) {
-      router.replace('/mock-login');
+      router.replace('/login');
     }
   }, [isAuthenticated, isLoading, router]);
 

@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import {
+  History,
   RotateCcw,
   CheckCircle2,
   ArrowRight,
@@ -12,6 +14,7 @@ import {
   EyeOff,
   Sparkles,
   ClipboardPaste,
+  Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -19,13 +22,18 @@ import {
   computeScore,
   buildCharacterMap,
   applyBackspace,
-  applyPaste,
   type CharacterMap,
 } from '@/lib/scoring';
 import { generatePassage, recommendDuration } from '@/lib/passage-generator';
-import { mockDictations, type DictationWithTranscript } from '@/lib/dictation-transcripts';
+import { mockDictations } from '@/lib/dictation-transcripts';
 import { sanitizeForTyping } from '@/lib/sanitize';
-import { addSessionResult } from '@/lib/session-results';
+import {
+  addSessionResult,
+  getSessionResults,
+  subscribeSessionResults,
+  clearSessionResults,
+  type SessionResult,
+} from '@/lib/session-results';
 
 type TestState = 'idle' | 'running' | 'complete';
 type Duration = 15 | 30 | 60;
@@ -41,12 +49,10 @@ const CATEGORIES: { value: Category; label: string }[] = [
 ];
 
 /**
- * Screen-fit heuristic: free-mode passages are sized so the
- * whole passage comfortably fits on a typical monitor
- * (~450 chars renders ~9 lines of text-3xl in the typing area).
- * Dictation/custom passages are content-driven.
+ * Free-mode passages are generated to ~75 words (always 50–100) by
+ * `lib/passage-generator.ts`. Dictation/custom passages are
+ * content-driven.
  */
-const FREE_TARGET_CHARS = 450;
 
 export type TypingClientProps = {
   /**
@@ -63,14 +69,25 @@ export type TypingClientProps = {
    * /student/dashboard "Resume practice" etc.
    */
   initialDictationId?: string;
+  /**
+   * Whether the visitor is signed in. On the home page this comes
+   * from the server (no client flash). Blind dictation and custom
+   * paste are members-only: guests see the tabs, but using them
+   * redirects to /login. Defaults to true (student area is gated
+   * by the proxy anyway).
+   */
+  authenticated?: boolean;
 };
 
 export default function TypingClient({
   variant = 'public',
   initialMode = 'free',
   initialDictationId,
+  authenticated = true,
 }: TypingClientProps) {
   const showModes = variant === 'student';
+  const isPublic = variant === 'public';
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>(initialMode);
 
   const [duration, setDuration] = useState<Duration>(30);
@@ -119,6 +136,37 @@ export default function TypingClient({
   const [peekedThisRun, setPeekedThisRun] = useState(false);
   /** Seconds elapsed since the test went 'running' — for untimed modes (dictation/custom). */
   const [untimedElapsed, setUntimedElapsed] = useState(0);
+  /**
+   * Total wrong keystrokes this attempt — the honest error count.
+   * It NEVER decreases on backspace: correcting a mistake improves
+   * accuracy, but the mistake still happened. One definition of
+   * "errors" is used everywhere (live strip, result panel, results).
+   */
+  const [errorTally, setErrorTally] = useState(0);
+
+  /**
+   * Hard gate: on the public page, blind dictation and custom paste
+   * are members-only. The lock icon + "/login" click is the UI; this
+   * effect is the enforcement — even if `mode` is tampered with via
+   * DevTools, extensions, or any client-side manipulation, it is
+   * reverted to free immediately and no dictation/custom content is
+   * ever loaded.
+   */
+  useEffect(() => {
+    if (isPublic && !authenticated && mode !== 'free') {
+      setMode('free');
+      setTyped('');
+      setShowReference(true);
+      setRunBlind(false);
+      setCustomText('');
+      setCustomInput('');
+      setErrorTally(0);
+      setStartTime(null);
+      setState('idle');
+      setTimeLeft(duration);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPublic, authenticated, mode]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const currentCharRef = useRef<HTMLSpanElement | null>(null);
@@ -138,16 +186,22 @@ export default function TypingClient({
   const peekingRef = useRef<boolean>(false);
 
   const freshPassage = useCallback(
-    (cat: Category) => generatePassage({ category: cat, targetChars: FREE_TARGET_CHARS }),
+    (cat: Category) => generatePassage({ category: cat, targetWords: 75 }),
     []
   );
 
   /* ─── Derived reference per mode ────────────────────────── */
   const reference = useMemo(() => {
-    if (mode === 'dictation') return dictation.referenceTranscript;
-    if (mode === 'custom') return customText;
+    if (mode === 'dictation') {
+      if (isPublic && !authenticated) return '';
+      return dictation.referenceTranscript;
+    }
+    if (mode === 'custom') {
+      if (isPublic && !authenticated) return '';
+      return customText;
+    }
     return passage;
-  }, [mode, dictation, customText, passage]);
+  }, [mode, dictation, customText, passage, isPublic, authenticated]);
 
   /* ─── Mode / category / dictation / customText changes ────
    *
@@ -170,6 +224,7 @@ export default function TypingClient({
     setPassage(freshPassage(category));
     setTyped('');
     setStartTime(null);
+    setErrorTally(0);
     if (timed) setTimeLeft(duration);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category]);
@@ -181,6 +236,7 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
+    setErrorTally(0);
 
     if (mode === 'free') {
       setShowReference(true);
@@ -203,6 +259,7 @@ export default function TypingClient({
     setState('idle');
     setStartTime(null);
     setTimeLeft(duration);
+    setErrorTally(0);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [duration]);
 
@@ -233,21 +290,42 @@ export default function TypingClient({
     return () => clearInterval(id);
   }, [state, timed]);
 
-  /* ─── Auto-complete (dictation/custom when typed reaches end) ─── */
+  /* ─── Auto-complete (any mode once the passage is fully typed) ───
+   * Submits immediately when the final word is fully typed —
+   * trailing punctuation (a closing period etc.) is optional, and
+   * completing the passage before the timer runs out ends the test
+   * early instead of holding you hostage. */
   useEffect(() => {
     if (state !== 'running') return;
     if (!reference) return;
-    if (timed) return; // free mode uses the timer
     if (typed.length >= reference.length) {
       setState('complete');
+      return;
     }
-  }, [typed, state, reference, timed]);
+    // Forgiving finish: all words typed and the last one matches the
+    // passage's final word (punctuation-stripped) → done.
+    const refWords = reference.trim().split(/\s+/).filter(Boolean);
+    const typedWords = typed.trim().split(/\s+/).filter(Boolean);
+    if (typedWords.length >= refWords.length && refWords.length > 0) {
+      const lastRef = (refWords[refWords.length - 1] ?? '').replace(
+        /[.,;:!?…]+$/,
+        ''
+      );
+      const lastTyped = typedWords[typedWords.length - 1] ?? '';
+      if (lastTyped.length > 0 && lastTyped === lastRef) {
+        setState('complete');
+      }
+    }
+  }, [typed, state, reference]);
 
-  /* ─── Manual submit (untimed modes) ─────────────────────── */
+  /* ─── Manual submit ───────────────────────────────────────
+   * Ends the run early in ANY mode while it is still running —
+   * in free mode you are no longer locked to the timer: submit
+   * whatever you have typed so far when you want to stop. */
   const manualSubmit = useCallback(() => {
-    if (state !== 'running' || timed) return;
+    if (state !== 'running') return;
     setState('complete');
-  }, [state, timed]);
+  }, [state]);
 
   /* ─── Scroll the current caret into view inside the typing area ─── */
   useLayoutEffect(() => {
@@ -291,6 +369,12 @@ export default function TypingClient({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') e.preventDefault();
+    // Tab = restart (Monkeytype-style): same passage, fresh attempt.
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      restart();
+      return;
+    }
     if (state === 'complete') return;
     if (e.key === 'Backspace') {
       e.preventDefault();
@@ -307,19 +391,23 @@ export default function TypingClient({
       e.target.value = typed;
       return;
     }
+    // Honest error counting: every newly appended character that
+    // mismatches the reference increments the tally — backspace
+    // never removes a recorded mistake.
+    const pos = typed.length;
+    if (value.length > pos && reference[pos] !== value[pos]) {
+      setErrorTally((n) => n + 1);
+    }
     setTyped(value);
   };
 
+  /**
+   * Paste is blocked inside the test — pasting (part of) the visible
+   * reference would be an instant 100% score. Own text enters only
+   * through the custom-text dialog, which is the sanctioned path.
+   */
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    if (state === 'complete' || !reference) return;
     e.preventDefault();
-    startIfIdle();
-    const pastedRaw = e.clipboardData.getData('text');
-    const pasted = sanitizeForTyping(pastedRaw);
-    if (!pasted) return;
-    const next = applyPaste(reference, typed, pasted);
-    if (next.length === typed.length) return;
-    setTyped(next);
   };
 
   /* ─── Global keyboard capture ─────────────────────────────
@@ -398,6 +486,11 @@ export default function TypingClient({
         setStartTime(Date.now());
         setRunBlind(!referenceVisibleRef.current && !peekedRef.current);
       }
+      // Honest error counting — a wrong keystroke is recorded even if
+      // the student immediately backspaces it.
+      if (reference[current.length] !== e.key) {
+        setErrorTally((n) => n + 1);
+      }
       setTyped(current + e.key);
     };
 
@@ -436,6 +529,7 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
+    setErrorTally(0);
     if (timed) setTimeLeft(duration);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [duration, timed]);
@@ -449,6 +543,7 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
+    setErrorTally(0);
     setTimeLeft(duration);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [category, duration, freshPassage]);
@@ -460,6 +555,8 @@ export default function TypingClient({
    */
   const applyBlindMode = useCallback(
     (blind: boolean) => {
+      // Blind dictation is members-only on the home page.
+      if (isPublic && !authenticated) return;
       setShowReference(!blind);
       // Keep custom mode's own blind flag in sync with the toggle.
       if (mode === 'custom') setCustomBlind(blind);
@@ -471,6 +568,7 @@ export default function TypingClient({
       setPeeking(false);
       peekedRef.current = false;
     setPeekedThisRun(false);
+      setErrorTally(0);
       setUntimedElapsed(0);
       if (timed) setTimeLeft(duration);
       requestAnimationFrame(() => inputRef.current?.focus());
@@ -491,6 +589,7 @@ export default function TypingClient({
     setState('idle');
     setStartTime(null);
     setRunBlind(false);
+    setErrorTally(0);
     setUntimedElapsed(0);
     if (timed) setTimeLeft(duration);
   }, [duration, timed]);
@@ -501,8 +600,13 @@ export default function TypingClient({
   }, []);
 
   const applyCustom = () => {
+    // Blind dictation and custom paste are members-only on the home
+    // page — even via DevTools this path must not succeed without a
+    // valid session (the mode lock reverts it too).
+    if (isPublic && !authenticated) return;
     const text = sanitizeForTyping(customInput);
-    if (text.length < 40) return;
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    if (words < 10) return;
     setCustomText(text);
     setCustomInput('');
     setShowCustomDialog(false);
@@ -510,6 +614,7 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
+    setErrorTally(0);
     const rec = recommendDuration(text);
     setDuration(rec);
     setTimeLeft(rec);
@@ -528,6 +633,19 @@ export default function TypingClient({
     if (!reference) return;
     recordedRef.current = true;
 
+    // Correct words — computed inline (same rule as the live counter):
+    // position-wise word match against the reference, no cascade.
+    const refWords = reference.trim().split(/\s+/).filter(Boolean);
+    const typedWords = typed.trim().split(/\s+/).filter(Boolean);
+    let correctWordCount = 0;
+    for (
+      let i = 0;
+      i < Math.min(refWords.length, typedWords.length);
+      i++
+    ) {
+      if (refWords[i] === typedWords[i]) correctWordCount++;
+    }
+
     addSessionResult({
       id: `${Date.now()}`,
       practice:
@@ -538,8 +656,11 @@ export default function TypingClient({
           : 'Free typing',
       category: mode === 'dictation' ? dictation.category : 'General',
       wpm: score.wpm,
+      rawWpm: score.rawWpm,
       accuracy: score.accuracy,
-      errors: score.incorrect,
+      correctWords: correctWordCount,
+      totalWords: refWords.length,
+      errors: errorTally,
       duration: `${Math.floor(elapsedSec / 60)}:${String(
         elapsedSec % 60
       ).padStart(2, '0')}`,
@@ -547,7 +668,7 @@ export default function TypingClient({
       mode,
       counted: runBlind,
     });
-  }, [state, reference, mode, dictation, score, elapsedSec, runBlind]);
+  }, [state, reference, typed, mode, dictation, score, elapsedSec, runBlind, errorTally]);
 
   /* ─── Display helpers ───────────────────────────────────── */
   const timeDisplay = `${String(Math.floor(timeLeft / 60)).padStart(1, '0')}:${String(timeLeft % 60).padStart(2, '0')}`;
@@ -558,9 +679,6 @@ export default function TypingClient({
   /** Only runs that started hidden and never peeked are counted. */
   const isCounted = isFinished && runBlind;
   const hasReference = reference.length > 0;
-  const progressPct = reference.length
-    ? Math.min(100, Math.round((typed.length / reference.length) * 100))
-    : 0;
 
   /** Word count for display — more useful than raw character counts. */
   const wordsTyped = (text: string) =>
@@ -580,18 +698,133 @@ export default function TypingClient({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-        <p className="text-xs text-amber-800 font-medium">
-          🚧 Results are session-only — not stored.
-        </p>
-        <p className="mt-1 text-xs text-amber-700">
-          You can finish up to 5 tests without refreshing and see each score on
-          this visit. Everything is cleared on refresh until the database is
-          connected.
-        </p>
-      </div>
+      {!isPublic && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-xs text-amber-800 font-medium">
+            🚧 Results are session-only — not stored.
+          </p>
+          <p className="mt-1 text-xs text-amber-700">
+            You can finish up to 5 tests without refreshing and see each score
+            on this visit. Everything is cleared on refresh until the database
+            is connected.
+          </p>
+        </div>
+      )}
+
+      {/* Public (Monkeytype-style): mode tabs in the same style as the
+          student page, then categories + durations for free mode.
+          Blind dictation and custom paste are members-only — guests
+          see them locked and are sent straight to /login. */}
+      {isPublic && (
+        <div className="flex items-center justify-between gap-4 flex-nowrap">
+          {/* Mode tabs (compact, student-page style) */}
+          <div
+            className="flex items-center gap-1 rounded-lg border border-border bg-surface p-0.5"
+            role="tablist"
+            aria-label="Typing mode"
+          >
+            <ModeTab
+              active={mode === 'free' && !isBlind}
+              onClick={() => {
+                if (isBlind) setShowReference(true);
+                setMode('free');
+              }}
+              icon={Sparkles}
+              label="Free"
+              hint="Curated"
+            />
+            {authenticated ? (
+              <ModeTab
+                active={mode === 'dictation'}
+                onClick={() => setMode('dictation')}
+                icon={Headphones}
+                label="Dictation"
+                hint="Blind"
+              />
+            ) : (
+              <ModeTab
+                active={false}
+                onClick={() => router.push('/login')}
+                icon={Lock}
+                label="Dictation"
+                hint="For sign in"
+              />
+            )}
+            {authenticated ? (
+              <ModeTab
+                active={mode === 'custom'}
+                onClick={() => {
+                  if (!customText) setShowCustomDialog(true);
+                  else setMode('custom');
+                }}
+                icon={ClipboardPaste}
+                label="Custom"
+                hint="Your text"
+              />
+            ) : (
+              <ModeTab
+                active={false}
+                onClick={() => router.push('/login')}
+                icon={Lock}
+                label="Custom"
+                hint="For sign in"
+              />
+            )}
+          </div>
+
+          {/* Categories + durations grouped together */}
+          {mode === 'free' && (
+            <div className="flex items-center gap-1.5 rounded-lg border border-border bg-surface p-0.5">
+              <div className="flex items-center gap-1">
+                  {CATEGORIES.map((c) => {
+                    const active = category === c.value;
+                    return (
+                      <button
+                        key={c.value}
+                        onClick={() => setCategory(c.value)}
+                        aria-pressed={active}
+                        className={cn(
+                          'rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors',
+                          active
+                            ? 'bg-brand text-brand-foreground'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="h-5 w-px bg-border mx-1" aria-hidden="true" />
+                <div className="flex items-center gap-0.5">
+                  {DURATIONS.map((d) => {
+                    const active = duration === d;
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => setDuration(d)}
+                        aria-pressed={active}
+                        className={cn(
+                          'min-w-[3rem] rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                          active
+                            ? 'bg-brand text-brand-foreground'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {d}s
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+          )}
+
+          <RecentRuns />
+        </div>
+      )}
 
       {/* Header row — title on the left, mode tabs (student only) on the right */}
+      {!isPublic && (
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <Type className="h-4 w-4 text-brand" strokeWidth={1.5} />
@@ -693,9 +926,11 @@ export default function TypingClient({
           </div>
         )}
       </div>
+      )}
 
-      {/* Categories — only relevant in free mode */}
-      {mode === 'free' && (
+      {/* Categories — only relevant in free mode (public has its own
+          compact config row above) */}
+      {mode === 'free' && !isPublic && (
         <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-surface p-0.5">
           {CATEGORIES.map((c) => {
             const active = category === c.value;
@@ -718,8 +953,9 @@ export default function TypingClient({
         </div>
       )}
 
-      {/* Student-only context row: dictation picker / custom summary / toggle */}
-      {showModes && mode !== 'free' && (
+      {/* Dictation / custom context row — same panel on home and student
+          (only reachable when signed in on the home page). */}
+      {mode !== 'free' && (
         <div className="grid gap-3 sm:grid-cols-2">
           {mode === 'dictation' && (
             <ControlCard>
@@ -731,7 +967,12 @@ export default function TypingClient({
               >
                 {mockDictations.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.title} — {d.duration}
+                    {d.title} —{' '}
+                    {
+                      d.referenceTranscript.trim().split(/\s+/).filter(Boolean)
+                        .length
+                    }{' '}
+                    words
                   </option>
                 ))}
               </select>
@@ -767,7 +1008,10 @@ export default function TypingClient({
                     {customText.length > 70 ? '…' : ''}
                   </p>
                   <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                    {customText.length} chars
+                    {customText.trim().split(/\s+/).filter(Boolean).length}{' '}
+                    {customText.trim().split(/\s+/).filter(Boolean).length === 1
+                      ? 'word'
+                      : 'words'}
                   </p>
                 </div>
               ) : (
@@ -830,7 +1074,36 @@ export default function TypingClient({
         </div>
       )}
 
-      {/* Live stats — WPM / accuracy / errors / time (or progress) */}
+      {/* Live stats — public gets a slim Monkeytype-style line that only
+          appears while typing; students get the full metric card. */}
+      {isPublic ? (
+        <div
+          aria-live="polite"
+          aria-atomic="true"
+          className="min-h-7 font-mono text-sm tabular-nums text-muted-foreground"
+        >
+          {state === 'running' && (
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+              <span>
+                <span className="text-lg font-semibold text-foreground">
+                  {score.wpm}
+                </span>{' '}
+                wpm
+              </span>
+              <span>
+                <span className="text-lg font-semibold text-foreground">
+                  {score.accuracy}%
+                </span>{' '}
+                accuracy
+              </span>
+              <span>{timeDisplay}</span>
+              <span className="ml-auto">
+                {wordsTyped(typed)}/{wordsTyped(reference)} words
+              </span>
+            </div>
+          )}
+        </div>
+      ) : (
       <div
         className="rounded-lg border border-border bg-surface px-5 py-4"
         aria-live="polite"
@@ -860,9 +1133,6 @@ export default function TypingClient({
                 </>
               )}
             </span>
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-              {wordsTyped(typed)}/{wordsTyped(reference)}
-            </span>
           </div>
         )}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -884,7 +1154,7 @@ export default function TypingClient({
                 label="correct"
                 value={`${correctWords()} / ${wordsTyped(reference)} words`}
               />
-              <MetricCell label="errors" value={wordsTyped(typed) - correctWords()} muted />
+              <MetricCell label="errors" value={errorTally} muted />
               <MetricCell
                 label={timed ? 'time' : 'elapsed'}
                 value={`${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, '0')}`}
@@ -899,6 +1169,7 @@ export default function TypingClient({
           </p>
         )}
       </div>
+      )}
 
       {/* Typing area */}
       {!hasReference ? (
@@ -922,7 +1193,8 @@ export default function TypingClient({
         <div
           ref={typingAreaRef}
           className={cn(
-            'cursor-text rounded-lg border bg-surface px-4 py-6 transition-colors sm:px-10 sm:py-14 min-h-[45vh] sm:min-h-[60vh] flex flex-col',
+            'cursor-text flex flex-col',
+            'rounded-3xl border border-border bg-surface px-4 py-6 transition-colors sm:px-6 sm:py-10 min-h-[50vh] sm:min-h-[50vh]',
             isBlind
               ? 'border-brand/30 ring-1 ring-brand/15 focus-within:border-brand/40 focus-within:ring-2 focus-within:ring-brand/30'
               : 'border-border focus-within:border-brand/40 focus-within:ring-2 focus-within:ring-brand/20'
@@ -938,12 +1210,20 @@ export default function TypingClient({
           }
           tabIndex={0}
           onKeyDown={(e) => {
+            // Tab = restart, Monkeytype-style — works whether or not
+            // the hidden input currently holds focus.
+            if (e.key === 'Tab') {
+              e.preventDefault();
+              restart();
+              return;
+            }
             if (e.key === ' ' || e.key === 'Backspace') {
               inputRef.current?.focus();
             }
           }}
         >
           {/* Header strip */}
+          {!isPublic && (
           <div className="mb-4 flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               {isPeeking ? (
@@ -980,9 +1260,10 @@ export default function TypingClient({
                 ? 'peeking'
                 : isBlind
                 ? `${wordsTyped(typed)} typed`
-                : `${wordsTyped(typed)}/${wordsTyped(reference)}`}
+                : `${correctWords()}/${wordsTyped(reference)} correct`}
             </span>
           </div>
+          )}
 
           {/* The actual passage — two render modes:
        • See mode  : show the full reference with per-character
@@ -1008,6 +1289,7 @@ export default function TypingClient({
                     ref={isCurrent ? currentCharRef : null}
                     className={cn(
                       'transition-colors duration-75',
+                      isCurrent && 'relative',
                       s === 'untyped' && 'text-muted-foreground/40',
                       s === 'correct' && 'text-success',
                       s === 'incorrect' && 'text-destructive',
@@ -1078,7 +1360,7 @@ export default function TypingClient({
                 <ArrowRight className="h-3.5 w-3.5" />
               </Button>
             )}
-            {!timed && state === 'running' && (
+            {state === 'running' && typed.length > 0 && (
               <Button
                 size="sm"
                 onClick={manualSubmit}
@@ -1101,9 +1383,12 @@ export default function TypingClient({
             reference={reference}
             typed={typed}
             mode={mode}
-            progressPct={progressPct}
             counted={isCounted}
             peeked={peekedThisRun}
+            errors={errorTally}
+            correctWords={correctWords()}
+            totalWords={wordsTyped(reference)}
+            public={isPublic}
             showReview={showModes || mode !== 'free'}
             onRetry={restart}
             onNewFree={mode === 'free' ? newFreePassage : undefined}
@@ -1111,8 +1396,8 @@ export default function TypingClient({
         </div>
       )}
 
-      {/* Custom-text dialog */}
-      {showModes && showCustomDialog && (
+      {/* Custom-text dialog (all variants — home custom pill opens it) */}
+      {showCustomDialog && (
         <CustomTextDialog
           customInput={customInput}
           setCustomInput={setCustomInput}
@@ -1124,7 +1409,7 @@ export default function TypingClient({
       )}
 
       {/* Blind-mode confirmation */}
-      {showModes && blindConfirm && (
+      {blindConfirm && (
         <BlindConfirmDialog
           action={blindConfirm}
           onCancel={() => setBlindConfirm(null)}
@@ -1156,7 +1441,7 @@ function ModeTab({
       role="tab"
       aria-selected={active}
       className={cn(
-        'flex items-center gap-2.5 rounded-md px-3.5 py-2 text-left transition-colors',
+        'flex items-center gap-2.5 rounded-lg px-3.5 py-2 text-left transition-colors',
         active
           ? 'bg-brand text-brand-foreground'
           : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
@@ -1326,8 +1611,8 @@ function CustomTextDialog({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cleaned = sanitizeForTyping(customInput);
-  const cleanedLength = cleaned.length;
-  const canStart = cleanedLength >= 40;
+  const wordCount = cleaned.trim().split(/\s+/).filter(Boolean).length;
+  const canStart = wordCount >= 10;
 
   useEffect(() => {
     // Focus the textarea so the user can paste/type immediately.
@@ -1397,14 +1682,14 @@ function CustomTextDialog({
           ref={textareaRef}
           value={customInput}
           onChange={(e) => setCustomInput(e.target.value)}
-          placeholder="Paste or type English text (at least 40 characters)…"
+          placeholder="Paste or type English text (at least 10 words)…"
           rows={8}
           className="max-h-64 w-full resize-y overflow-auto rounded-md border border-border bg-background p-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
         />
 
         <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
           <span>
-            {cleanedLength} chars (after cleaning) · min 40
+            {wordCount} {wordCount === 1 ? 'word' : 'words'} · min 10
           </span>
           {canStart && (
             <span className="text-success">
@@ -1535,9 +1820,12 @@ function CompletionPanel({
   reference,
   typed,
   mode,
-  progressPct,
   counted,
   peeked,
+  errors,
+  correctWords,
+  totalWords,
+  public: isPublic,
   showReview,
   onRetry,
   onNewFree,
@@ -1547,11 +1835,18 @@ function CompletionPanel({
   reference: string;
   typed: string;
   mode: Mode;
-  progressPct: number;
   /** True only when the run started in blind mode. */
   counted: boolean;
   /** True if the reference was previewed during this attempt. */
   peeked: boolean;
+  /** Total wrong keystrokes this run — never reduced by backspace. */
+  errors: number;
+  /** Words typed correctly (position-wise match). */
+  correctWords: number;
+  /** Total words in the reference passage. */
+  totalWords: number;
+  /** Public (home page) rendering — minimal, no banners/badges. */
+  public?: boolean;
   /** Whether to render the per-character review. */
   showReview: boolean;
   onRetry: () => void;
@@ -1560,7 +1855,9 @@ function CompletionPanel({
   const verdict =
     score.accuracy >= 95
       ? {
-          title: 'Excellent — your transcription is highly accurate.',
+          title: isPublic
+            ? 'Excellent — highly accurate.'
+            : 'Excellent — your transcription is highly accurate.',
           detail: 'Push for speed next time.',
         }
       : score.accuracy >= 85
@@ -1572,7 +1869,7 @@ function CompletionPanel({
           title: 'Type naturally — speed will follow.',
           detail:
             mode === 'free'
-              ? 'Take a moment to slow down on tricky words.'
+              ? 'Slow down on the tricky words, then go again.'
               : 'See your word-by-word comparison below.',
         };
 
@@ -1587,6 +1884,7 @@ function CompletionPanel({
             <h2 className="text-lg font-semibold text-foreground">
               {verdict.title}
             </h2>
+            {!isPublic && (
             <span
               className={cn(
                 'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider',
@@ -1605,6 +1903,7 @@ function CompletionPanel({
                 </>
               )}
             </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">{verdict.detail}</p>
         </div>
@@ -1621,17 +1920,37 @@ function CompletionPanel({
           )}
         </div>
       </div>
+      {isPublic && (
+        <p className="text-[11px] text-muted-foreground">
+          Press{' '}
+          <kbd className="rounded border border-border bg-background px-1 font-mono">
+            Tab
+          </kbd>{' '}
+          to restart the same passage — or pick “New passage” for different
+          text.
+        </p>
+      )}
 
-      <div className="grid grid-cols-2 gap-3 border-t border-border pt-4 sm:grid-cols-4">
+      <div className="grid grid-cols-3 gap-3 border-t border-border pt-4 sm:grid-cols-6">
         <ResultStat label="wpm" value={score.wpm} accent={counted} />
+        <ResultStat label="raw wpm" value={score.rawWpm} />
         <ResultStat label="accuracy" value={`${score.accuracy}%`} accent={counted} />
-        <ResultStat label="errors" value={score.incorrect} />
         <ResultStat
-          label={mode === 'free' ? 'time' : 'elapsed'}
+          label="correct words"
+          value={`${correctWords}/${totalWords}`}
+        />
+        <ResultStat label="errors" value={errors} />
+        <ResultStat
+          label="time"
           value={`${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, '0')}`}
         />
       </div>
 
+      {isPublic ? (
+        <p className="text-[11px] text-muted-foreground">
+          Results are session-only — cleared when you refresh.
+        </p>
+      ) : (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 mb-4">
         <p className="text-xs text-amber-800 font-medium">
           🚧 Under progress — results are NOT stored.
@@ -1642,8 +1961,9 @@ function CompletionPanel({
           connected.
         </p>
       </div>
+      )}
 
-      {!counted && (
+      {!counted && !isPublic && (
         <p className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
           {peeked
             ? 'You previewed the reference during this attempt, so these numbers are for practice only and are not scored. Restart to record a clean blind run.'
@@ -1914,16 +2234,23 @@ function DiffTable({
   typed: string;
 }) {
   const diffs = useMemo(() => buildDiff(reference, typed), [reference, typed]);
+  // Missed words are surfaced in the amber review block above; the
+  // table lists only wrong/extra words, so the header counts rows
+  // that actually appear.
+  const tableRows = useMemo(
+    () => diffs.filter((d) => d.kind !== 'missed'),
+    [diffs]
+  );
   const LIMIT = 80;
-  const shown = diffs.slice(0, LIMIT);
-  const hidden = diffs.length - shown.length;
+  const shown = tableRows.slice(0, LIMIT);
+  const hidden = tableRows.length - shown.length;
 
   return (
     <div>
       <div className="mb-2 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
         <span>What word was there vs what you typed</span>
         <span className="ml-auto font-mono tabular-nums">
-          {diffs.length} word difference{diffs.length === 1 ? '' : 's'}
+          {tableRows.length} word difference{tableRows.length === 1 ? '' : 's'}
         </span>
       </div>
 
@@ -1976,8 +2303,90 @@ function DiffTable({
           </div>
           {hidden > 0 && (
             <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-              Showing the first {LIMIT} of {diffs.length} word differences.
+              Showing the first {LIMIT} of {tableRows.length} word differences.
             </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Recent runs (public home page) ─────────────────────── */
+
+/**
+ * Session-only history of runs from this visit (max 5), for the
+ * public home page. Runs recorded on /typing and the student area
+ * share the same in-memory store, so this popover shows them all
+ * until the page is refreshed.
+ */
+function RecentRuns() {
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState<SessionResult[]>([]);
+
+  useEffect(() => {
+    setResults(getSessionResults());
+    return subscribeSessionResults(() => setResults(getSessionResults()));
+  }, []);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors',
+          open ? 'text-brand' : 'text-muted-foreground hover:text-foreground'
+        )}
+      >
+        <History className="h-3.5 w-3.5" strokeWidth={1.5} />
+        Recent runs
+        <span className="font-mono tabular-nums">{results.length}</span>
+      </button>
+
+      {open && (
+        <div className="mt-2 w-full max-w-md rounded-md border border-border bg-surface p-3 sm:ml-auto sm:w-80">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              This visit only
+            </span>
+            {results.length > 0 && (
+              <button
+                type="button"
+                onClick={clearSessionResults}
+                className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {results.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No runs yet — finish a test and it appears here (cleared on
+              refresh).
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {results.map((r) => (
+                <li
+                  key={r.id}
+                  className="flex items-center gap-3 font-mono text-xs tabular-nums"
+                >
+                  <span className="font-semibold text-foreground">
+                    {r.wpm} wpm
+                  </span>
+                  <span className="text-muted-foreground">{r.accuracy}%</span>
+                  <span className="text-muted-foreground">
+                    {r.correctWords}/{r.totalWords} words
+                  </span>
+                  <span className="text-muted-foreground">{r.duration}</span>
+                  <span className="ml-auto truncate text-[11px] text-muted-foreground">
+                    {r.practice}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}
