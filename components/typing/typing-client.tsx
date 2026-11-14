@@ -368,6 +368,9 @@ export default function TypingClient({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // The global listener already handles typing-input keystrokes
+    // (with preventDefault). Skip if already processed.
+    if (e.defaultPrevented) return;
     if (e.key === 'Enter') e.preventDefault();
     // Tab = restart (Monkeytype-style): same passage, fresh attempt.
     if (e.key === 'Tab') {
@@ -429,11 +432,11 @@ export default function TypingClient({
       if (!el) return false;
       const tag = el.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-        // The typing engine's hidden <input> counts as "ours"
-        // and we should NOT capture its keystrokes here; the
-        // React onChange handler will manage them.
+        // The typing engine's hidden <input> is handled by the global
+        // listener below — do not skip it, otherwise typing never
+        // starts without a manual click on the typing area.
         if ((el as HTMLInputElement).dataset?.typingInput === 'true') {
-          return true;
+          return false;
         }
         return true;
       }
@@ -2109,9 +2112,9 @@ function ReviewBlock({
             className={cn(
               c.state === 'correct' && 'text-foreground',
               c.state === 'wrong' &&
-                'rounded-sm bg-destructive/20 text-destructive underline decoration-destructive/70 decoration-2 underline-offset-2',
+                'text-destructive underline decoration-destructive decoration-2 underline-offset-3',
               c.state === 'missed' &&
-                'text-warning underline decoration-warning/70 decoration-dotted decoration-2 underline-offset-2',
+                'text-warning underline decoration-warning decoration-dotted decoration-2 underline-offset-3',
               c.state === 'overflow' &&
                 'rounded-sm bg-destructive/20 text-destructive line-through'
             )}

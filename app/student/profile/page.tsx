@@ -5,7 +5,7 @@ import { Mail, User as UserIcon, Shield } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 
 export default function StudentProfilePage() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
 
   const initials = user?.name
     ?.split(' ')
@@ -13,6 +13,49 @@ export default function StudentProfilePage() {
     .slice(0, 2)
     .join('')
     .toUpperCase();
+
+  // While the profile page's own auth fetch is in flight, show a
+  // loading skeleton instead of flashing empty dashes.
+  if (isLoading) {
+    return (
+      <div className="space-y-10">
+        <StudentHeader
+          title="My profile"
+          description="Your account information and batch details."
+        />
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="rounded-lg border border-border bg-surface p-6 lg:col-span-2">
+            <div className="flex items-start gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand text-2xl font-bold text-brand-foreground">
+                AC
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-foreground">
+                  Loading...
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Student
+                </p>
+              </div>
+            </div>
+            <dl className="mt-6 grid gap-3 sm:grid-cols-2">
+              <Row icon={Mail} label="Email" value="Loading..." />
+              <Row icon={Shield} label="Role" value="Loading..." />
+            </dl>
+          </div>
+          <div className="rounded-lg border border-border bg-surface p-6">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              Practice summary
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Practice stats are not stored yet. They will appear here once the
+              database backend is connected.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-10">
@@ -53,7 +96,7 @@ export default function StudentProfilePage() {
             <Row
               icon={Shield}
               label="Role"
-              value={user?.role ?? '—'}
+              value={user?.role === 'admin' ? 'Administrator' : 'Student'}
             />
           </dl>
         </div>
@@ -92,7 +135,7 @@ function Row({
         <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           {label}
         </p>
-        <p className="text-sm text-foreground">{value}</p>
+        <p className="text-base text-foreground">{value}</p>
       </div>
     </div>
   );
