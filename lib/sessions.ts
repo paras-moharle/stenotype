@@ -17,8 +17,26 @@ export type Session = {
   userAgent?: string;
 };
 
-const sessions = new Map<string, Session>(); // keyed by token
-const sessionsByEmail = new Map<string, string>(); // email -> token
+type GlobalSessionStore = {
+  sessions: Map<string, Session>;
+  sessionsByEmail: Map<string, string>;
+  revokedTokens: Map<string, number>;
+  cleanupTimerStarted?: boolean;
+};
+
+const globalStore = (globalThis as unknown as {
+  __stenotypeSessionStore?: GlobalSessionStore;
+}).__stenotypeSessionStore ??
+  ({
+    sessions: new Map<string, Session>(),
+    sessionsByEmail: new Map<string, string>(),
+    revokedTokens: new Map<string, number>(),
+  } as GlobalSessionStore);
+
+(globalThis as unknown as { __stenotypeSessionStore?: GlobalSessionStore }).__stenotypeSessionStore =
+  globalStore;
+
+const { sessions, sessionsByEmail, revokedTokens } = globalStore;
 
 const DEFAULT_TTL_SECONDS = 4 * 60 * 60; // 4 hours
 
@@ -40,63 +58,90 @@ export function createSession({
   userAgent?: string;
 }): void {
   // Revoke any existing session for this email (single active session).
-  const existingToken = sessionsByEmail.get(email);
-  if (existingToken) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const existingToken = sessionsByEmail.get(normalizedEmail);
+  if (existingToken && existingToken !== token) {
+    const prev = sessions.get(existingToken);
+    revokedTokens.set(
+      existingToken,
+      prev?.expiresAt ?? Date.now() + ttlSeconds * 1000
+    );
     sessions.delete(existingToken);
   }
 
   const now = Date.now();
   const session: Session = {
     token,
-    email,
+    email: normalizedEmail,
     expiresAt: now + ttlSeconds * 1000,
     createdAt: now,
     ip,
     userAgent,
   };
 
+  revokedTokens.delete(token);
   sessions.set(token, session);
-  sessionsByEmail.set(email, token);
+  sessionsByEmail.set(normalizedEmail, token);
+}
 
-  // Auto-cleanup after expiry.
-  setTimeout(() => {
-    const s = sessions.get(token);
-    if (s && s.expiresAt <= Date.now()) {
-      sessions.delete(token);
-      sessionsByEmail.delete(s.email);
-    }
-  }, ttlSeconds * 1000);
+export function isTokenRevoked(token: string): boolean {
+  const exp = revokedTokens.get(token);
+  if (!exp) return false;
+  if (exp <= Date.now()) {
+    revokedTokens.delete(token);
+    return false;
+  }
+  return true;
 }
 
 export function getSession(token: string): Session | null {
+  if (isTokenRevoked(token)) return null;
+
   const s = sessions.get(token);
   if (!s) return null;
   if (s.expiresAt <= Date.now()) {
     sessions.delete(token);
-    sessionsByEmail.delete(s.email);
+    if (sessionsByEmail.get(s.email) === token) {
+      sessionsByEmail.delete(s.email);
+    }
     return null;
   }
   return s;
 }
 
 export function revokeSession(email: string): boolean {
-  const token = sessionsByEmail.get(email);
+  const normalizedEmail = email.trim().toLowerCase();
+  const token = sessionsByEmail.get(normalizedEmail);
   if (!token) return false;
+  const s = sessions.get(token);
+  revokedTokens.set(
+    token,
+    s?.expiresAt ?? Date.now() + DEFAULT_TTL_SECONDS * 1000
+  );
   sessions.delete(token);
-  sessionsByEmail.delete(email);
+  sessionsByEmail.delete(normalizedEmail);
   return true;
 }
 
 export function revokeSessionByToken(token: string): boolean {
   const s = sessions.get(token);
+  revokedTokens.set(
+    token,
+    s?.expiresAt ?? Date.now() + DEFAULT_TTL_SECONDS * 1000
+  );
   if (!s) return false;
   sessions.delete(token);
-  sessionsByEmail.delete(s.email);
+  if (sessionsByEmail.get(s.email) === token) {
+    sessionsByEmail.delete(s.email);
+  }
   return true;
 }
 
 export function getAllSessions(): Session[] {
-  return Array.from(sessions.values()).filter((s) => s.expiresAt > Date.now());
+  cleanupExpiredSessions();
+  return Array.from(sessions.values()).sort(
+    (a, b) => b.createdAt - a.createdAt
+  );
 }
 
 export function getSessionCount(): number {
@@ -108,10 +153,22 @@ export function cleanupExpiredSessions(): void {
   for (const [token, s] of Array.from(sessions.entries())) {
     if (s.expiresAt <= now) {
       sessions.delete(token);
-      sessionsByEmail.delete(s.email);
+      if (sessionsByEmail.get(s.email) === token) {
+        sessionsByEmail.delete(s.email);
+      }
+    }
+  }
+  for (const [token, exp] of Array.from(revokedTokens.entries())) {
+    if (exp <= now) {
+      revokedTokens.delete(token);
     }
   }
 }
 
-// Run cleanup every 5 minutes.
-setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
+if (!globalStore.cleanupTimerStarted) {
+  globalStore.cleanupTimerStarted = true;
+  const timer = setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
+  if (typeof timer === 'object' && 'unref' in timer) {
+    timer.unref();
+  }
+}

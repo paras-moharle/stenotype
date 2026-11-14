@@ -24,7 +24,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
-      <nav className="container-page flex h-16 items-center justify-between">
+      <nav className="container-page relative flex h-16 items-center justify-between">
         {/* Brand */}
         <Link
           href="/"
@@ -40,8 +40,8 @@ export function Navbar() {
           StenoType
         </Link>
 
-        {/* Desktop nav */}
-        <div className="hidden items-center gap-0.5 md:flex">
+        {/* Desktop nav — centered */}
+        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-0.5 md:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}
@@ -58,12 +58,12 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* Desktop CTA */}
-        <div className="hidden items-center gap-2 md:flex">
+        {/* Right cluster: CTA + mobile toggle */}
+        <div className="flex items-center gap-2">
           {isAuthenticated && user?.role === 'admin' && (
             <Link
               href="/admin"
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:text-brand/80"
+              className="hidden rounded-md px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:text-brand/80 sm:inline-flex"
             >
               Admin
             </Link>
@@ -71,19 +71,19 @@ export function Navbar() {
           {isAuthenticated && user?.role === 'student' && (
             <Link
               href="/student/dashboard"
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:text-brand/80"
+              className="hidden rounded-md px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:text-brand/80 sm:inline-flex"
             >
               Dashboard
             </Link>
           )}
           {isAuthenticated ? (
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5">
+              <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-2 py-1.5 sm:px-3">
                 <User className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.5} />
-                <span className="text-sm font-medium text-foreground">
+                <span className="hidden text-sm font-medium text-foreground sm:inline">
                   {user?.name?.split(' ')[0] ?? user?.email}
                 </span>
-                <span className="font-mono text-[10px] uppercase tracking-wider text-brand">
+                <span className="hidden font-mono text-[10px] uppercase tracking-wider text-brand sm:inline">
                   {user?.role}
                 </span>
               </div>
@@ -98,24 +98,22 @@ export function Navbar() {
           ) : (
             <Link
               href="/login"
-              aria-label="Sign in"
-              title="Sign in"
-              className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
-              <User className="h-4.5 w-4.5" strokeWidth={1.5} />
+              Sign In
             </Link>
           )}
-        </div>
 
-        {/* Mobile toggle */}
-        <button
-          className="flex h-9 w-9 items-center justify-center rounded-md text-foreground transition-colors hover:bg-accent md:hidden"
-          onClick={() => setMobileOpen((v) => !v)}
-          aria-label="Toggle navigation menu"
-          aria-expanded={mobileOpen}
-        >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+          {/* Mobile toggle */}
+          <button
+            className="flex h-9 w-9 items-center justify-center rounded-md text-foreground transition-colors hover:bg-accent md:hidden"
+            onClick={() => setMobileOpen((v) => !v)}
+            aria-label="Toggle navigation menu"
+            aria-expanded={mobileOpen}
+          >
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
       </nav>
 
       {/* Mobile menu */}

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Menu, X, ExternalLink } from 'lucide-react';
+import { Menu, X, ExternalLink, LogOut } from 'lucide-react';
 import { useState } from 'react';
 import {
   LayoutDashboard,
@@ -15,6 +15,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/use-auth';
 
 const adminLinks = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
@@ -34,6 +35,7 @@ interface AdminMobileNavProps {
 
 export function AdminMobileNav({ pathname }: AdminMobileNavProps) {
   const [open, setOpen] = useState(false);
+  const { signOut } = useAuth();
 
   return (
     <div className="border-b border-border bg-surface/50 md:hidden">
@@ -49,14 +51,23 @@ export function AdminMobileNav({ pathname }: AdminMobileNavProps) {
             <ExternalLink className="inline h-3 w-3" /> View site
           </Link>
         </div>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-accent"
-          aria-label="Toggle admin menu"
-          aria-expanded={open}
-        >
-          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void signOut()}
+            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setOpen((v) => !v)}
+            className="flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-accent"
+            aria-label="Toggle admin menu"
+            aria-expanded={open}
+          >
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
       </div>
       {open && (
         <nav className="container-page grid grid-cols-2 gap-1 pb-3">

@@ -53,14 +53,6 @@ const safeMinutes = (elapsedMs: number): number => {
 };
 
 /**
- * Compute the full score for a typing attempt.
- *
- * @param passage  The reference passage the user is trying to type.
- * @param typed    The exact string the user has typed so far.
- * @param elapsedMs  Wall-clock time in ms since the user started typing.
- *                   Use 0 to compute "live" WPM (which returns 0).
- */
-/**
  * Compute the full score for a typing attempt using the standard
  * 5-characters-per-word convention (Monkeytype, keybr, etc.).
  *
@@ -68,30 +60,115 @@ const safeMinutes = (elapsedMs: number): number => {
  *   - Net WPM          = Correct Characters / 5 / Minutes
  *   - Accuracy (%)     = Correct Characters / Total Typed Characters × 100
  *
- * Errors never cascade: each character is judged independently against
- * the passage at the same position.
+ * Scoring is word-aligned: typed words are aligned to reference words
+ * via sequence alignment, so a skip / extra character / 1-letter typo in
+ * one word never shifts the rest of the passage. Errors never cascade.
  */
+function tokenizeWords(input: string): string[] {
+  return input.split(/\s+/).filter((w) => w.length > 0);
+}
+
+/**
+ * Word-level sequence alignment (LCS) between reference words and the
+ * words the student actually typed. Returns index pairs
+ * [referenceWordIndex, typedWordIndex].
+ */
+function alignWordPairs(
+  refWords: string[],
+  typedWords: string[]
+): Array<[number, number]> {
+  const n = refWords.length;
+  const m = typedWords.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () =>
+    new Array<number>(m + 1).fill(0)
+  );
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      dp[i][j] =
+        refWords[i] === typedWords[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const pairs: Array<[number, number]> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (refWords[i] === typedWords[j]) {
+      pairs.push([i, j]);
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Count how many reference words the student typed correctly.
+ * Uses the same word-level alignment as computeScore so a skip or
+ * typo never shifts later words into being "wrong".
+ */
+export function countCorrectWords(passage: string, typed: string): number {
+  const refWords = tokenizeWords(passage);
+  const typedWords = tokenizeWords(typed);
+  const pairs = alignWordPairs(refWords, typedWords);
+  let correct = 0;
+  for (const [ri, ti] of pairs) {
+    const ref = refWords[ri];
+    const t = typedWords[ti];
+    const minLen = Math.min(ref.length, t.length);
+    let ok = true;
+    for (let k = 0; k < minLen; k += 1) {
+      if (ref[k] !== t[k]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) correct += 1;
+  }
+  return correct;
+}
+
 export function computeScore(
   passage: string,
   typed: string,
   elapsedMs: number
 ): ScoreResult {
-  const len = Math.min(typed.length, passage.length);
+  const refWords = tokenizeWords(passage);
+  const typedWords = tokenizeWords(typed);
+  const pairs = alignWordPairs(refWords, typedWords);
+
   let correct = 0;
-  for (let i = 0; i < len; i++) {
-    if (typed[i] === passage[i]) correct++;
+  let totalTyped = 0;
+  const matchedTypedIdx = new Set<number>();
+
+  for (const [ri, ti] of pairs) {
+    const t = typedWords[ti];
+    const ref = refWords[ri];
+    const minLen = Math.min(ref.length, t.length);
+    for (let k = 0; k < minLen; k += 1) {
+      if (ref[k] === t[k]) correct += 1;
+    }
+    totalTyped += t.length;
+    matchedTypedIdx.add(ti);
+  }
+  // Typed words that never aligned are off-target → count them as
+  // typed-but-incorrect so accuracy can never get stuck at a false 100%.
+  for (let i = 0; i < typedWords.length; i += 1) {
+    if (!matchedTypedIdx.has(i)) {
+      totalTyped += typedWords[i].length;
+    }
   }
 
-  const totalTyped = typed.length;
-  const incorrect = totalTyped - correct;
-
-  const accuracy =
-    totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
-
+  const incorrect = Math.max(0, totalTyped - correct);
+  const accuracy = totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
   const minutes = safeMinutes(elapsedMs);
   const wpm = minutes > 0 ? Math.round(correct / 5 / minutes) : 0;
-  const rawWpm =
-    minutes > 0 ? Math.round(totalTyped / 5 / minutes) : 0;
+  const rawWpm = minutes > 0 ? Math.round(totalTyped / 5 / minutes) : 0;
 
   return {
     typed: totalTyped,

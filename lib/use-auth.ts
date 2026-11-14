@@ -12,12 +12,32 @@ export type AppUser = {
 export function useAuth() {
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const isAuthenticated = user !== null;
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch('/api/me', { cache: 'no-store' });
-      const data = res.ok ? await res.json() : null;
-      setUser(data?.user ?? null);
+      const res = await fetch('/api/me', {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data?.user ?? null);
+      } else {
+        // Stale session cookie — clear it so proxy.ts doesn't keep
+        // redirecting to a dead session.
+        setUser(null);
+        try {
+          await fetch('/api/logout', {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+        } catch {
+          /* ignore */
+        }
+      }
     } catch {
       setUser(null);
     } finally {
@@ -40,6 +60,7 @@ export function useAuth() {
   const signIn = async (email: string, password: string) => {
     const res = await fetch('/api/login', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
@@ -52,29 +73,26 @@ export function useAuth() {
     const data = await res.json();
     const signedIn = data.user as AppUser;
     setUser(signedIn);
-    window.location.assign(
-      signedIn.role === 'admin' ? '/admin' : '/student/dashboard'
-    );
+
+    const target =
+      signedIn.role === 'admin' ? '/admin' : '/student/typing';
+    window.location.replace(target);
     return signedIn;
   };
 
   const signOut = async () => {
     try {
-      await fetch('/api/logout', { method: 'POST' });
+      await fetch('/api/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
     } catch {
       /* ignore network errors — still redirect */
     }
     setUser(null);
-    window.location.assign('/');
+    window.location.replace('/');
   };
 
-  return {
-    user,
-    session: null,
-    isAuthenticated: !!user,
-    isLoading,
-    signIn,
-    signOut,
-    refresh,
-  };
+  return { user, isAuthenticated, isLoading, refresh, signIn, signOut };
 }

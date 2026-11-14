@@ -22,6 +22,7 @@ import {
   computeScore,
   buildCharacterMap,
   applyBackspace,
+  countCorrectWords,
   type CharacterMap,
 } from '@/lib/scoring';
 import { generatePassage, recommendDuration } from '@/lib/passage-generator';
@@ -303,18 +304,25 @@ export default function TypingClient({
       return;
     }
     // Forgiving finish: all words typed and the last one matches the
-    // passage's final word (punctuation-stripped) → done.
+    // passage's final word (punctuation-stripped) → done. Word coverage
+    // is verified per-word so a spacebar typo mid-word can't fake a full
+    // passage and trigger premature completion.
     const refWords = reference.trim().split(/\s+/).filter(Boolean);
     const typedWords = typed.trim().split(/\s+/).filter(Boolean);
-    if (typedWords.length >= refWords.length && refWords.length > 0) {
-      const lastRef = (refWords[refWords.length - 1] ?? '').replace(
-        /[.,;:!?…]+$/,
-        ''
-      );
-      const lastTyped = typedWords[typedWords.length - 1] ?? '';
-      if (lastTyped.length > 0 && lastTyped === lastRef) {
-        setState('complete');
-      }
+    const allWordsCovered =
+      refWords.length > 0 &&
+      typedWords.length >= refWords.length &&
+      refWords.every((_, idx) => (typedWords[idx] ?? '').length > 0);
+    const lastRef = (refWords[refWords.length - 1] ?? '').replace(
+      /[.,;:!?…]+$/,
+      ''
+    );
+    const lastTyped = (typedWords[typedWords.length - 1] ?? '').replace(
+      /[.,;:!?…]+$/,
+      ''
+    );
+    if (allWordsCovered && lastTyped.length > 0 && lastTyped === lastRef) {
+      setState('complete');
     }
   }, [typed, state, reference]);
 
@@ -332,9 +340,9 @@ export default function TypingClient({
     if (state !== 'running') return;
     if (!currentCharRef.current) return;
     currentCharRef.current.scrollIntoView({
-      block: 'center',
+      block: 'nearest',
       inline: 'nearest',
-      behavior: 'smooth',
+      behavior: 'auto',
     });
   }, [typed, state]);
 
@@ -475,13 +483,17 @@ export default function TypingClient({
 
       // Skip other non-printable / control keys (Arrow*, Tab,
       // Escape, Function keys, etc.) — the user is navigating,
-      // not typing.
-      if (e.key.length !== 1) return;
+      // not typing. Android IME composition fires keydown with
+      // e.key === "Unidentified" (keyCode 229) — let it through and
+      // let the input's onChange handle the composed text.
+      if (e.key !== 'Unidentified' && e.key.length !== 1) return;
       // Don't accept newlines / tabs as typing input.
       if (e.key === '\n' || e.key === '\t') return;
 
       // Printable character: append it to the typed string.
-      e.preventDefault();
+      if (e.key !== 'Unidentified') {
+        e.preventDefault();
+      }
       const current = typedRef.current;
       if (current.length >= reference.length) return;
       if (state === 'idle') {
@@ -489,12 +501,17 @@ export default function TypingClient({
         setStartTime(Date.now());
         setRunBlind(!referenceVisibleRef.current && !peekedRef.current);
       }
-      // Honest error counting — a wrong keystroke is recorded even if
-      // the student immediately backspaces it.
-      if (reference[current.length] !== e.key) {
-        setErrorTally((n) => n + 1);
+      // Android IME: Unidentified keys come from composition — the
+      // real character arrives via the input's onChange, so only count
+      // real single characters here.
+      if (e.key.length === 1) {
+        // Honest error counting — a wrong keystroke is recorded even if
+        // the student immediately backspaces it.
+        if (reference[current.length] !== e.key) {
+          setErrorTally((n) => n + 1);
+        }
+        setTyped(current + e.key);
       }
-      setTyped(current + e.key);
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -640,14 +657,7 @@ export default function TypingClient({
     // position-wise word match against the reference, no cascade.
     const refWords = reference.trim().split(/\s+/).filter(Boolean);
     const typedWords = typed.trim().split(/\s+/).filter(Boolean);
-    let correctWordCount = 0;
-    for (
-      let i = 0;
-      i < Math.min(refWords.length, typedWords.length);
-      i++
-    ) {
-      if (refWords[i] === typedWords[i]) correctWordCount++;
-    }
+    const correctWordCount = countCorrectWords(reference, typed);
 
     addSessionResult({
       id: `${Date.now()}`,
@@ -687,20 +697,11 @@ export default function TypingClient({
   const wordsTyped = (text: string) =>
     text.trim().split(/\s+/).filter((w) => w.length > 0).length;
 
-  /** Correct word count for display (word-by-word match, no cascade). */
-  const correctWords = () => {
-    const pw = reference.trim().split(/\s+/).filter((w) => w.length > 0);
-    const tw = typed.trim().split(/\s+/).filter((w) => w.length > 0);
-    let correct = 0;
-    const len = Math.min(pw.length, tw.length);
-    for (let i = 0; i < len; i++) {
-      if (pw[i] === tw[i]) correct++;
-    }
-    return correct;
-  };
+  /** Correct word count for display (word-aligned, no cascade). */
+  const correctWords = () => countCorrectWords(reference, typed);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {!isPublic && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="text-xs text-amber-800 font-medium">
@@ -719,7 +720,7 @@ export default function TypingClient({
           Blind dictation and custom paste are members-only — guests
           see them locked and are sent straight to /login. */}
       {isPublic && (
-        <div className="flex items-center justify-between gap-4 flex-nowrap">
+        <div className="flex flex-wrap items-center justify-center sm:justify-between gap-2">
           {/* Mode tabs (compact, student-page style) */}
           <div
             className="flex items-center gap-1 rounded-lg border border-border bg-surface p-0.5"
@@ -777,7 +778,7 @@ export default function TypingClient({
 
           {/* Categories + durations grouped together */}
           {mode === 'free' && (
-            <div className="flex items-center gap-1.5 rounded-lg border border-border bg-surface p-0.5">
+            <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-surface p-0.5 sm:flex-row sm:items-center">
               <div className="flex items-center gap-1">
                   {CATEGORIES.map((c) => {
                     const active = category === c.value;
@@ -787,7 +788,7 @@ export default function TypingClient({
                         onClick={() => setCategory(c.value)}
                         aria-pressed={active}
                         className={cn(
-                          'rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors',
+                          'rounded-lg px-2.5 py-2.5 text-xs font-medium transition-colors',
                           active
                             ? 'bg-brand text-brand-foreground'
                             : 'text-muted-foreground hover:text-foreground'
@@ -798,7 +799,7 @@ export default function TypingClient({
                     );
                   })}
                 </div>
-                <div className="h-5 w-px bg-border mx-1" aria-hidden="true" />
+                <div className="h-px w-full bg-border my-1 sm:h-5 sm:w-px" aria-hidden="true" />
                 <div className="flex items-center gap-0.5">
                   {DURATIONS.map((d) => {
                     const active = duration === d;
@@ -808,7 +809,7 @@ export default function TypingClient({
                         onClick={() => setDuration(d)}
                         aria-pressed={active}
                         className={cn(
-                          'min-w-[3rem] rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                          'min-w-[3rem] rounded-lg px-3 py-2.5 text-xs font-medium transition-colors',
                           active
                             ? 'bg-brand text-brand-foreground'
                             : 'text-muted-foreground hover:text-foreground'
@@ -822,9 +823,10 @@ export default function TypingClient({
               </div>
           )}
 
-          <RecentRuns />
         </div>
       )}
+
+      {isPublic && <RecentRuns />}
 
       {/* Header row — title on the left, mode tabs (student only) on the right */}
       {!isPublic && (
@@ -1444,7 +1446,7 @@ function ModeTab({
       role="tab"
       aria-selected={active}
       className={cn(
-        'flex items-center gap-2.5 rounded-lg px-3.5 py-2 text-left transition-colors',
+        'flex items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-left transition-colors',
         active
           ? 'bg-brand text-brand-foreground'
           : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
@@ -1923,17 +1925,6 @@ function CompletionPanel({
           )}
         </div>
       </div>
-      {isPublic && (
-        <p className="text-[11px] text-muted-foreground">
-          Press{' '}
-          <kbd className="rounded border border-border bg-background px-1 font-mono">
-            Tab
-          </kbd>{' '}
-          to restart the same passage — or pick “New passage” for different
-          text.
-        </p>
-      )}
-
       <div className="grid grid-cols-3 gap-3 border-t border-border pt-4 sm:grid-cols-6">
         <ResultStat label="wpm" value={score.wpm} accent={counted} />
         <ResultStat label="raw wpm" value={score.rawWpm} />

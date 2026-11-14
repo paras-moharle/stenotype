@@ -1,12 +1,13 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import TypingClient from '@/components/typing/typing-client';
 import { StudentHeader } from '@/components/student/student-header';
 
 type Mode = 'free' | 'dictation' | 'custom';
 
-export default function StudentTypingPage() {
+function StudentTypingContent() {
   const searchParams = useSearchParams();
   const dictationId = searchParams.get('dictationId') ?? undefined;
   const modeParam = searchParams.get('mode');
@@ -32,5 +33,13 @@ export default function StudentTypingPage() {
         initialDictationId={dictationId}
       />
     </div>
+  );
+}
+
+export default function StudentTypingPage() {
+  return (
+    <Suspense fallback={null}>
+      <StudentTypingContent />
+    </Suspense>
   );
 }
