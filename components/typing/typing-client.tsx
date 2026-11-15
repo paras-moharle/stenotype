@@ -28,7 +28,6 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   align,
-  buildDisplayItems,
   buildLiveChars,
   formatClock,
   normalizeText,
@@ -304,12 +303,17 @@ export default function TypingClient({
     if (state !== 'complete') return;
 
     requestAnimationFrame(() => {
-      resultRef.current?.scrollIntoView({
+      const target =
+        showModes && !showReference
+          ? typingAreaRef.current
+          : resultRef.current;
+
+      target?.scrollIntoView({
         behavior: 'smooth',
         block: 'start',
       });
     });
-  }, [state]);
+  }, [state, showModes, showReference]);
 
   const MAX_EXTRA_CHARS = 40;
   const composingRef = useRef(false);
@@ -1268,6 +1272,11 @@ export default function TypingClient({
                     <Eye className="h-3 w-3 text-warning" />
                     Reference preview — typing paused
                   </>
+                ) : isBlind && isFinished && showModes ? (
+                  <>
+                    <CheckCircle2 className="h-3 w-3 text-brand" />
+                    <span className="text-brand">Reference passage</span>
+                  </>
                 ) : isBlind ? (
                   <>
                     <EyeOff className="h-3 w-3 text-brand" />
@@ -1308,6 +1317,8 @@ export default function TypingClient({
               onDone={stopPeeking}
               compact={!isPublic}
             />
+          ) : isBlind && isFinished && showModes ? (
+            <ReferencePassageReview reference={reference} />
           ) : isBlind ? (
             <BlindTypingDisplay
               typed={typed}
@@ -1434,6 +1445,7 @@ export default function TypingClient({
         <div ref={resultRef}>
           <CompletionPanel
             score={score}
+            reference={reference}
             elapsedSec={elapsedSec}
             mode={mode}
             counted={isCounted}
@@ -1590,6 +1602,14 @@ function BlindTypingDisplay({
         />
       )}
     </div>
+  );
+}
+
+function ReferencePassageReview({ reference }: { reference: string }) {
+  return (
+    <p className="mx-auto w-full max-w-5xl flex-1 whitespace-pre-wrap break-words font-mono text-lg leading-[1.85] text-foreground sm:text-xl sm:leading-[1.9]">
+      {reference}
+    </p>
   );
 }
 
@@ -1909,6 +1929,7 @@ function BlindConfirmDialog({
 
 function CompletionPanel({
   score,
+  reference,
   elapsedSec,
   mode,
   counted,
@@ -1920,6 +1941,7 @@ function CompletionPanel({
   onNewFree,
 }: {
   score: ScoreResult;
+  reference: string;
   elapsedSec: number;
   mode: Mode;
   counted: boolean;
@@ -2123,7 +2145,7 @@ function CompletionPanel({
               </div>
             </div>
 
-            <ReviewBlock alignment={score.alignment} />
+            <ReviewBlock alignment={score.alignment} reference={reference} />
           </div>
 
           <DiffTable entries={score.alignment.wordDiff} />
@@ -2182,30 +2204,70 @@ function LegendSwatch({
   );
 }
 
-function ReviewBlock({ alignment }: { alignment: AlignmentResult }) {
-  const items = useMemo(() => buildDisplayItems(alignment), [alignment]);
+function ReviewBlock({
+  alignment,
+  reference,
+}: {
+  alignment: AlignmentResult;
+  reference: string;
+}) {
+  const typedOps = useMemo(
+    () => alignment.ops.filter((op) => op.type !== 'delete'),
+    [alignment.ops]
+  );
 
-  const lastAttemptedIndex = useMemo(() => {
-    for (let index = items.length - 1; index >= 0; index -= 1) {
-      if (items[index].state !== 'missed') return index;
+  const lastAttemptedRefIndex = useMemo(() => {
+    let last = -1;
+
+    for (const op of alignment.ops) {
+      if (op.type === 'equal' || op.type === 'substitute') {
+        last = Math.max(last, op.refIndex);
+      }
     }
 
-    return -1;
-  }, [items]);
+    return last;
+  }, [alignment.ops]);
 
-  if (items.length === 0) {
-    return (
-      <div className="rounded-xl border border-border bg-background p-3 text-sm text-muted-foreground">
-        Nothing to review.
-      </div>
-    );
-  }
+  const lastAttemptedWordIndex = useMemo(() => {
+    if (lastAttemptedRefIndex < 0) return -1;
+
+    const attemptedPrefix = reference
+      .slice(0, lastAttemptedRefIndex + 1)
+      .trim();
+
+    return attemptedPrefix
+      ? attemptedPrefix.split(/\s+/).length - 1
+      : -1;
+  }, [reference, lastAttemptedRefIndex]);
+
+  const missedWords = useMemo(
+    () =>
+      alignment.wordDiff.filter(
+        (entry) =>
+          entry.kind === 'missed' &&
+          entry.index <= lastAttemptedWordIndex &&
+          entry.expected !== null
+      ),
+    [alignment.wordDiff, lastAttemptedWordIndex]
+  );
+
+  const notReachedCount = useMemo(
+    () =>
+      alignment.wordDiff.filter(
+        (entry) =>
+          entry.kind === 'missed' &&
+          entry.index > lastAttemptedWordIndex
+      ).length,
+    [alignment.wordDiff, lastAttemptedWordIndex]
+  );
+
+  const displayChar = (ch: string) => (ch === ' ' ? '\u00A0' : ch);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border/80 bg-background/70 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2">
         <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Passage comparison
+          Your entered text
         </span>
         <span className="text-[10px] text-muted-foreground">
           Case and punctuation count
@@ -2214,36 +2276,72 @@ function ReviewBlock({ alignment }: { alignment: AlignmentResult }) {
 
       <div className="max-h-[32rem] overflow-y-auto px-3 py-4 sm:px-5 sm:py-5">
         <p className="whitespace-pre-wrap break-words font-mono text-[15px] leading-[1.9] tracking-[0.01em] sm:text-base sm:leading-[2] lg:text-[17px]">
-          {items.map((item, index) => {
-            const display = item.ch === ' ' ? '\u00A0' : item.ch;
-            const isUntypedTail =
-              item.state === 'missed' && index > lastAttemptedIndex;
+          {typedOps.length === 0 ? (
+            <span className="text-muted-foreground">Nothing typed.</span>
+          ) : (
+            typedOps.map((op, index) => {
+              if (op.type === 'equal') {
+                return (
+                  <span key={index} className="font-medium text-success">
+                    {displayChar(op.ch)}
+                  </span>
+                );
+              }
 
-            return (
-              <span
-                key={index}
-                title={
-                  item.state === 'wrong' && item.expected
-                    ? `Expected “${item.expected}”`
-                    : undefined
-                }
-                className={cn(
-                  item.state === 'correct' && 'font-medium text-success',
-                  item.state === 'wrong' &&
-                    'text-destructive underline decoration-destructive decoration-2 underline-offset-[3px]',
-                  item.state === 'missed' &&
-                    !isUntypedTail &&
-                    'text-warning underline decoration-warning decoration-dotted decoration-2 underline-offset-[3px]',
-                  isUntypedTail && 'text-muted-foreground/45',
-                  item.state === 'extra' &&
-                    'rounded-sm bg-destructive/15 text-destructive line-through decoration-2'
-                )}
-              >
-                {display}
-              </span>
-            );
-          })}
+              if (op.type === 'substitute') {
+                return (
+                  <span
+                    key={index}
+                    title={`Expected “${op.refCh}”.`}
+                    className="text-destructive underline decoration-destructive decoration-2 underline-offset-[3px]"
+                  >
+                    {displayChar(op.typedCh)}
+                  </span>
+                );
+              }
+
+              if (op.type === 'insert') {
+                return (
+                  <span
+                    key={index}
+                    title="Extra typed character."
+                    className="rounded-sm bg-destructive/15 text-destructive line-through decoration-2"
+                  >
+                    {displayChar(op.ch)}
+                  </span>
+                );
+              }
+
+              return null;
+            })
+          )}
         </p>
+
+        {missedWords.length > 0 && (
+          <div className="mt-4 border-t border-border/60 pt-3">
+            <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Missed words
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {missedWords.map((entry) => (
+                <span
+                  key={`missed-${entry.index}`}
+                  title={`Missed passage word ${entry.index + 1}.`}
+                  className="rounded-md bg-warning/10 px-1.5 py-1 font-mono text-[13px] text-warning"
+                >
+                  {entry.expected}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {notReachedCount > 0 && (
+          <p className="mt-3 border-t border-border/60 pt-2 text-[10px] text-muted-foreground">
+            {notReachedCount} {notReachedCount === 1 ? 'word' : 'words'} not
+            reached; the reference is shown above.
+          </p>
+        )}
       </div>
     </div>
   );
