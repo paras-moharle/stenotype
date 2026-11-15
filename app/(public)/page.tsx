@@ -3,8 +3,7 @@ import TypingClient from '@/components/typing/typing-client';
 import { SESSION_COOKIE, verifySession } from '@/lib/auth-server';
 
 /**
- * Home = the typing test. Monkeytype-style: no hero, no marketing
- * sections — the passage is on screen immediately, the timer starts
+ * Home = the typing test. The passage is the focus, the timer starts
  * on the first keystroke, and sign-in lives in the top bar.
  *
  * Blind dictation and custom-paste are members-only: guests see the
@@ -17,7 +16,7 @@ export default async function HomePage() {
   const authenticated = Boolean(token && verifySession(token));
 
   return (
-    <div className="container-page py-8 lg:py-12">
+    <div className="container-page py-4 sm:py-6 lg:py-8">
       <TypingClient variant="public" authenticated={authenticated} />
     </div>
   );

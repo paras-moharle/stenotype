@@ -23,16 +23,15 @@ export function Navbar() {
     href === '/' ? pathname === '/' : pathname.startsWith(href);
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
-      <nav className="container-page relative flex h-16 items-center justify-between">
-        {/* Brand */}
+    <header className="sticky top-0 z-50 w-full border-b border-border bg-background/90 backdrop-blur-md">
+      <nav className="container-page relative flex h-14 items-center justify-between sm:h-16">
         <Link
           href="/"
           className="flex items-center gap-2.5 text-[15px] font-semibold tracking-tight text-foreground"
           onClick={() => setMobileOpen(false)}
         >
           <span
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-brand text-[12px] font-bold leading-none text-brand-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.15),0_0_0_1px_rgba(255,255,255,0.04)]"
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-brand text-[12px] font-bold leading-none text-brand-foreground shadow-sm"
             aria-hidden="true"
           >
             S
@@ -40,17 +39,17 @@ export function Navbar() {
           StenoType
         </Link>
 
-        {/* Desktop nav — centered */}
-        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-0.5 md:flex">
+        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 md:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
+              aria-current={isActive(link.href) ? 'page' : undefined}
               className={cn(
-                'relative rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                'rounded-xl px-3 py-2 text-sm font-medium transition-colors',
                 isActive(link.href)
-                  ? 'text-brand'
-                  : 'text-muted-foreground hover:text-foreground'
+                  ? 'bg-brand/10 text-brand'
+                  : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
               )}
             >
               {link.label}
@@ -58,28 +57,32 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* Right cluster: CTA + mobile toggle */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           {isAuthenticated && user?.role === 'admin' && (
             <Link
               href="/admin"
-              className="hidden rounded-md px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:text-brand/80 sm:inline-flex"
+              className="hidden rounded-xl px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:bg-brand/10 sm:inline-flex"
             >
               Admin
             </Link>
           )}
+
           {isAuthenticated && user?.role === 'student' && (
             <Link
               href="/student/dashboard"
-              className="hidden rounded-md px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:text-brand/80 sm:inline-flex"
+              className="hidden rounded-xl px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:bg-brand/10 sm:inline-flex"
             >
               Dashboard
             </Link>
           )}
+
           {isAuthenticated ? (
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-2 py-1.5 sm:px-3">
-                <User className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.5} />
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-2 py-1.5 sm:px-3">
+                <User
+                  className="h-3.5 w-3.5 text-muted-foreground"
+                  strokeWidth={1.5}
+                />
                 <span className="hidden text-sm font-medium text-foreground sm:inline">
                   {user?.name?.split(' ')[0] ?? user?.email}
                 </span>
@@ -87,9 +90,11 @@ export function Navbar() {
                   {user?.role}
                 </span>
               </div>
+
               <button
+                type="button"
                 onClick={signOut}
-                className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
                 aria-label="Sign out"
               >
                 <LogOut className="h-4 w-4" strokeWidth={1.5} />
@@ -98,74 +103,82 @@ export function Navbar() {
           ) : (
             <Link
               href="/login"
-              className="flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+              className="flex h-9 items-center rounded-xl border border-border bg-surface px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
-              Sign In
+              Sign in
             </Link>
           )}
 
-          {/* Mobile toggle */}
           <button
-            className="flex h-9 w-9 items-center justify-center rounded-md text-foreground transition-colors hover:bg-accent md:hidden"
-            onClick={() => setMobileOpen((v) => !v)}
+            type="button"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-surface text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 md:hidden"
+            onClick={() => setMobileOpen((value) => !value)}
             aria-label="Toggle navigation menu"
             aria-expanded={mobileOpen}
           >
-            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            {mobileOpen ? (
+              <X className="h-5 w-5" />
+            ) : (
+              <Menu className="h-5 w-5" />
+            )}
           </button>
         </div>
       </nav>
 
-      {/* Mobile menu */}
       {mobileOpen && (
         <div className="border-t border-border bg-background md:hidden">
-          <div className="container-page flex flex-col gap-1 py-4">
+          <div className="container-page flex flex-col gap-1 py-3">
             {navLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
                 onClick={() => setMobileOpen(false)}
+                aria-current={isActive(link.href) ? 'page' : undefined}
                 className={cn(
-                  'rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
+                  'rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
                   isActive(link.href)
-                    ? 'text-brand'
+                    ? 'bg-brand/10 text-brand'
                     : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                 )}
               >
                 {link.label}
               </Link>
             ))}
+
             {isAuthenticated && user?.role === 'admin' && (
               <Link
                 href="/admin"
                 onClick={() => setMobileOpen(false)}
-                className="rounded-md px-3 py-2.5 text-sm font-medium text-brand"
+                className="rounded-xl px-3 py-2.5 text-sm font-medium text-brand hover:bg-brand/10"
               >
                 Admin
               </Link>
             )}
+
             {isAuthenticated && user?.role === 'student' && (
               <Link
                 href="/student/dashboard"
                 onClick={() => setMobileOpen(false)}
-                className="rounded-md px-3 py-2.5 text-sm font-medium text-brand"
+                className="rounded-xl px-3 py-2.5 text-sm font-medium text-brand hover:bg-brand/10"
               >
                 Dashboard
               </Link>
             )}
+
             {isAuthenticated ? (
               <button
+                type="button"
                 onClick={() => {
                   setMobileOpen(false);
                   signOut();
                 }}
-                className="flex items-center gap-2 rounded-md px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <LogOut className="h-3.5 w-3.5" />
                 Sign out ({user?.role})
               </button>
             ) : (
-              <Button asChild size="sm" className="mt-2">
+              <Button asChild size="sm" className="mt-1 rounded-xl">
                 <Link href="/login" onClick={() => setMobileOpen(false)}>
                   Sign in
                 </Link>

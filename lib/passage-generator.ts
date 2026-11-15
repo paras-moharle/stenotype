@@ -2,22 +2,15 @@
  * Passage generator — curated passage bank.
  *
  * The free typing test draws from a bank of hand-written passages
- * (15 per category, each 50–100 words of coherent English prose).
- * A curated bank reads like real dictation material; a template
- * engine can only ever produce mad-lib sentences.
+ * (15 per category, each 50–100 words).
  *
- * Rotation is non-repeating: each category keeps a shuffled bag and
- * draws from it without replacement, so the same passage never
- * appears twice until every passage in the pool has been shown once.
- * A numeric seed makes selection deterministic (same seed → same
- * passage) for tests and tooling.
+ * Rotation is non-repeating for each category and selected word-count
+ * pool. A numeric seed bypasses rotation and selects deterministically.
  */
 
-import { type DictationCategory } from './schemas';
+export type PassageCategory = 'Legal' | 'Professional' | 'General';
 
-/* ─── The passage bank ───────────────────────────────────── */
-
-export const PASSAGE_BANK: Record<DictationCategory, readonly string[]> = {
+export const PASSAGE_BANK: Record<PassageCategory, readonly string[]> = {
   Legal: [
     'The hearing began promptly at ten, with the presiding judge calling the matter for final disposal. Counsel for the plaintiff read the affidavit into the record, pausing whenever the stenographer asked for a slower pace. The defence raised two preliminary objections, both concerning the admissibility of the unsigned agreement. The court reserved its ruling on the first objection and dismissed the second after a brief exchange. Adjournment was granted for a week so that both sides could file their written submissions.',
     'During cross-examination, the witness conceded that she had signed the receipt on the day of the transaction, though she maintained that the amount recorded on it was never paid. The defence counsel produced the bank statement for the same week and invited the court to compare the two dates. After a short recess, the judge directed the registry to summon the bank officer on the next date. The matter now stands listed for further evidence.',
@@ -73,9 +66,9 @@ export const PASSAGE_BANK: Record<DictationCategory, readonly string[]> = {
 
 /* ─── Non-repeating rotation ─────────────────────────────── */
 
-/** Mulberry32 — a tiny seeded PRNG. Same seed → same sequence. */
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
+
   return () => {
     t = (t + 0x6d2b79f5) >>> 0;
     let r = t;
@@ -85,25 +78,22 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-const shuffled = <T,>(pool: readonly T[], rand: () => number): T[] => {
+function shuffled<T>(pool: readonly T[], rand: () => number): T[] {
   const copy = [...pool];
-  for (let i = copy.length - 1; i > 0; i--) {
+
+  for (let i = copy.length - 1; i > 0; i -= 1) {
     const j = Math.floor(rand() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
-  return copy;
-};
 
-const pick = <T,>(arr: readonly T[], rand: () => number): T =>
-  arr[Math.floor(rand() * arr.length)];
+  return copy;
+}
+
+function pick<T>(items: readonly T[], rand: () => number): T {
+  return items[Math.floor(rand() * items.length)];
+}
 
 const CATEGORIES = ['Legal', 'Professional', 'General'] as const;
-
-/**
- * Per-category draw bags (module state). Each bag holds passages not
- * yet shown; when empty it is refilled with a fresh shuffle — so a
- * passage repeats only after the whole pool has been exhausted.
- */
 const bags = new Map<string, string[]>();
 
 function drawNonRepeating(
@@ -111,88 +101,103 @@ function drawNonRepeating(
   pool: readonly string[],
   rand: () => number
 ): string {
-  let bag = bags.get(key);
-  if (!bag || bag.length === 0) {
+  if (pool.length === 0) {
+    throw new Error('Cannot draw a passage from an empty pool.');
+  }
+
+  const allowed = new Set(pool);
+  let bag = (bags.get(key) ?? []).filter((passage) =>
+    allowed.has(passage)
+  );
+
+  if (bag.length === 0) {
     bag = shuffled(pool, rand);
-    bags.set(key, bag);
   }
-  while (bag.length > 0) {
-    const candidate = bag.pop() as string;
-    if (pool.includes(candidate)) return candidate;
+
+  const selected = bag.pop();
+
+  if (selected === undefined) {
+    throw new Error('Passage pool unexpectedly became empty.');
   }
-  // Pool narrowed between refill and now — refill against it.
-  bag = shuffled(pool, rand);
+
   bags.set(key, bag);
-  return bag[bag.length - 1];
+  return selected;
 }
 
 const seedFromTime = (): number =>
   (Date.now() & 0xffffffff) ^ Math.floor(Math.random() * 0xffffffff);
 
-const countWords = (s: string): number => s.trim().split(/\s+/).length;
-
-/* ─── Public API ─────────────────────────────────────────── */
+const countWords = (text: string): number => {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+};
 
 export type GenerateOptions = {
-  /**
-   * Approximate target word count. All bank passages are 50–100
-   * words; the pool is narrowed to passages near this target when
-   * possible. Default: no narrowing.
-   */
   targetWords?: number;
-  /**
-   * Category. 'mixed' picks ONE coherent category per passage —
-   * variety comes between passages, not inside one.
-   */
-  category?: DictationCategory | 'mixed';
-  /**
-   * Optional numeric seed. Same seed → same passage (deterministic,
-   * bypasses the rotation bag). Used by tests and tooling.
-   */
+  category?: PassageCategory | 'mixed';
   seed?: number;
 };
 
-/**
- * Generate a single passage suitable for a typing session.
- *
- * Usage:
- *   generatePassage()                          // random category
- *   generatePassage({ category: 'Legal' })     // legal passage
- *   generatePassage({ targetWords: 60 })       // shorter pool
- *   generatePassage({ seed: 1234 })            // reproducible
- */
 export function generatePassage(opts: GenerateOptions = {}): string {
   const { category = 'mixed', seed, targetWords } = opts;
-  const rand = mulberry32(seed ?? seedFromTime());
 
-  const cat: DictationCategory =
+  if (seed !== undefined && !Number.isFinite(seed)) {
+    throw new RangeError('seed must be a finite number.');
+  }
+
+  if (
+    targetWords !== undefined &&
+    (!Number.isFinite(targetWords) || targetWords < 0)
+  ) {
+    throw new RangeError('targetWords must be a finite, non-negative number.');
+  }
+
+  if (
+    category !== 'mixed' &&
+    !Object.prototype.hasOwnProperty.call(PASSAGE_BANK, category)
+  ) {
+    throw new RangeError(`Unknown passage category: ${String(category)}`);
+  }
+
+  const rand = mulberry32(seed ?? seedFromTime());
+  const selectedCategory: PassageCategory =
     category === 'mixed' ? pick(CATEGORIES, rand) : category;
 
-  let pool = PASSAGE_BANK[cat];
+  let pool = PASSAGE_BANK[selectedCategory];
+
   if (targetWords !== undefined) {
     const near = pool.filter(
-      (p) => Math.abs(countWords(p) - targetWords) <= 20
+      (passage) => Math.abs(countWords(passage) - targetWords) <= 20
     );
-    if (near.length > 0) pool = near;
+
+    if (near.length > 0) {
+      pool = near;
+    }
   }
 
   if (seed !== undefined) {
-    return pool[seed % pool.length];
+    const index =
+      ((Math.trunc(seed) % pool.length) + pool.length) % pool.length;
+    return pool[index];
   }
 
-  return drawNonRepeating(cat, pool, rand);
+  // Separate rotation bags for different narrowed pools.
+  const bank = PASSAGE_BANK[selectedCategory];
+  const poolKey = pool.map((passage) => bank.indexOf(passage)).join(',');
+  return drawNonRepeating(`${selectedCategory}:${poolKey}`, pool, rand);
 }
 
 /**
- * Estimate the typing duration a passage will support.
- * Average adult typing speed is ~40 wpm, so a passage
- * with N words lasts roughly N / 40 minutes.
- * Returns the recommended duration in seconds.
+ * Estimate the shortest supported timed-test duration that aims to let
+ * a 40-WPM typist use about 60% of the timer. Recommendations are capped
+ * at the longest available duration, 60 seconds.
  */
 export function recommendDuration(passage: string): 15 | 30 | 60 {
-  const words = passage.trim().split(/\s+/).length;
-  // Aim for the passage to last ~60% of the chosen duration.
-  if (words < 35) return 15;
-  if (words < 80) return 30;
+  const words = countWords(passage);
+  const estimatedTypingSeconds = (words / 40) * 60;
+  const suggestedSeconds = estimatedTypingSeconds / 0.6;
+
+  if (suggestedSeconds <= 15) return 15;
+  if (suggestedSeconds <= 30) return 30;
   return 60;
 }

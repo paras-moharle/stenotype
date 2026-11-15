@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Prisma-generated client.
     "generated/**",
+    // Zero-dependency node:test suites (not part of the Next build).
+    "tests/**",
   ]),
   {
     rules: {

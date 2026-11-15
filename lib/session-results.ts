@@ -3,29 +3,35 @@
 /**
  * Session-only results store.
  *
- * Results live in memory for the current browser visit only.
- * They survive client-side navigation between pages (typing →
- * results) but are wiped on a full page refresh or tab close.
- *
- * This is intentional until the database is connected — the UI
- * explicitly tells students that results are not stored.
+ * Results survive client-side navigation for this browser visit and are
+ * cleared by a full refresh or tab close.
  */
 
 export type SessionResult = {
   id: string;
   practice: string;
-  category: 'General' | 'Legal' | 'Professional';
+  category: 'General' | 'Legal' | 'Professional' | 'Mixed' | 'Custom';
+  /** Net WPM; kept as `wpm` for existing consumers. */
   wpm: number;
+  /** Explicit alias for net WPM. */
+  netWpm: number;
+  /** Gross WPM before the accuracy adjustment. */
   rawWpm: number;
+  /** Exact attempted-word accuracy; untouched passage tail is excluded. */
   accuracy: number;
-  /** Words typed correctly (position-wise match). */
+  /** How much of the reference was covered (0–100). */
+  completion: number;
   correctWords: number;
-  /** Total words in the reference passage. */
+  incorrectWords: number;
+  missedWords: number;
+  extraWords: number;
   totalWords: number;
-  errors: number;
+  /** Whether the attempt met the minimum scoring thresholds. */
+  scored: boolean;
   duration: string;
   date: string;
   mode: 'free' | 'dictation' | 'custom';
+  /** True only for a scored blind run. */
   counted: boolean;
 };
 
@@ -35,7 +41,7 @@ let results: SessionResult[] = [];
 const listeners = new Set<() => void>();
 
 function emit() {
-  listeners.forEach((fn) => fn());
+  listeners.forEach((listener) => listener());
 }
 
 export function addSessionResult(result: SessionResult) {

@@ -14,17 +14,20 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   return (
-    <div className={cn('max-w-2xl', className)}>
+    <div className={cn('max-w-3xl', className)}>
       {eyebrow && (
-        <p className="mb-3 text-xs font-medium uppercase tracking-widest text-brand">
+        <p className="mb-4 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-brand">
+          <span className="h-1.5 w-1.5 rounded-full bg-brand" />
           {eyebrow}
         </p>
       )}
-      <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+
+      <h1 className="text-balance text-4xl font-semibold leading-[1.08] tracking-tight text-foreground sm:text-5xl lg:text-[3.5rem]">
         {title}
       </h1>
+
       {description && (
-        <p className="mt-4 text-base leading-relaxed text-muted-foreground text-balance">
+        <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground sm:text-base">
           {description}
         </p>
       )}

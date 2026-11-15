@@ -1,20 +1,29 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { Info } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
-/**
- * Preview notice for the public site. Hidden on the home page so the
- * typing experience stays clean — the home page already surfaces a
- * small "session-only results" footnote via the typing engine.
- */
 export function PreviewBanner() {
   const pathname = usePathname();
+
   if (pathname === '/') return null;
 
   return (
-    <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800">
-      🚧 Preview build — saved results and accounts are under progress.
-      Typing practice works now.
+    <div className="border-b border-warning/15 bg-background/80 px-4 py-2">
+      <div className="container-page flex items-center justify-center gap-2.5">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
+          <Info className="h-3.5 w-3.5" strokeWidth={1.7} />
+        </span>
+        <p className="text-center text-[11px] leading-relaxed sm:text-xs">
+          <span className="font-semibold text-warning">Preview build</span>
+          <span className="text-muted-foreground">
+            {' '}
+            · Accounts and saved results are still in progress. Typing practice
+            is available now.
+          </span>
+        </p>
+      </div>
     </div>
   );
 }

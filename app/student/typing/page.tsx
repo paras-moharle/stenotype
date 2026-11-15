@@ -16,13 +16,13 @@ function StudentTypingContent() {
     modeParam === 'custom'
       ? 'custom'
       : modeParam === 'free'
-      ? 'free'
-      : modeParam === 'dictation' || dictationId
-      ? 'dictation'
-      : 'free';
+        ? 'free'
+        : modeParam === 'dictation' || dictationId
+          ? 'dictation'
+          : 'free';
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-4 pb-8 sm:space-y-5">
       <StudentHeader
         title="Typing"
         description="Practice with your own text, assigned dictations, or curated passages."
@@ -36,9 +36,23 @@ function StudentTypingContent() {
   );
 }
 
+function TypingPageFallback() {
+  return (
+    <div className="space-y-4" aria-label="Loading typing practice">
+      <div className="space-y-2">
+        <div className="h-3 w-24 animate-pulse rounded bg-surface" />
+        <div className="h-8 w-44 animate-pulse rounded-lg bg-surface" />
+        <div className="h-4 w-72 max-w-full animate-pulse rounded bg-surface" />
+      </div>
+      <div className="h-24 animate-pulse rounded-2xl border border-border/70 bg-surface/60" />
+      <div className="h-72 animate-pulse rounded-2xl border border-border/70 bg-surface/60" />
+    </div>
+  );
+}
+
 export default function StudentTypingPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<TypingPageFallback />}>
       <StudentTypingContent />
     </Suspense>
   );

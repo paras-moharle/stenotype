@@ -241,7 +241,7 @@ export type SettingsInput = z.infer<typeof settingsSchema>;
 /**
  * Payload sent from the typing page to the future
  * `POST /api/sessions` route when a student finishes a test.
- * The server re-computes the score using `lib/scoring.ts`
+ * The server re-computes the score using `lib/typing/scoring.ts`
  * to make sure the client didn't tamper with the numbers.
  */
 export const sessionSubmissionSchema = z.object({
