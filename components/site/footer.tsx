@@ -3,7 +3,6 @@ import { Github } from 'lucide-react';
 
 const footerLinks = [
   { href: '/', label: 'Typing practice' },
-  { href: '/classes', label: 'Classes' },
   { href: '/about', label: 'About' },
 ];
 

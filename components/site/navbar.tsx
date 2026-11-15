@@ -9,8 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/use-auth';
 
 const navLinks = [
-  { href: '/', label: 'Home' },
-  { href: '/classes', label: 'Classes' },
+  { href: '/', label: 'Practice' },
   { href: '/about', label: 'About' },
 ];
 
@@ -39,7 +38,7 @@ export function Navbar() {
           StenoType
         </Link>
 
-        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 md:flex">
+        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-border/70 bg-surface/70 p-1 shadow-sm md:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}

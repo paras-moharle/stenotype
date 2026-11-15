@@ -88,10 +88,10 @@ export default function AboutPage() {
               </Link>
 
               <Link
-                href="/classes"
+                href="/"
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border bg-background/60 px-4 py-2.5 text-sm font-medium text-foreground transition hover:border-brand/30 hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
               >
-                Explore practice
+                Get in touch
                 <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
               </Link>
             </div>
@@ -206,7 +206,10 @@ export default function AboutPage() {
           </a>
         </div>
 
-        <div className="rounded-2xl border border-border/80 bg-surface/70 p-5 sm:p-6">
+        <div
+          id="contact"
+          className="rounded-2xl border border-border/80 bg-surface/70 p-5 sm:p-6"
+        >
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-brand">
             Get in touch
           </p>
