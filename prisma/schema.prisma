@@ -573,7 +573,7 @@ model RateLimit {
   id          String   @id
   key         String   @unique
   count       Int
-  lastRequest DateTime
+  lastRequest BigInt
 
   @@map("rateLimit")
 }
