@@ -1,29 +1,31 @@
-'use client';
-
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { AdminShell } from '@/components/admin/admin-shell';
-import { useAuth } from '@/lib/use-auth';
+import {
+  SESSION_COOKIE,
+  verifySession,
+  getUserByEmail,
+} from '@/lib/auth-server';
 
-export default function AdminLayout({
+/**
+ * Server-side session gate. Runs on every request, so a session
+ * revoked by the admin (or by a second login) is caught immediately
+ * — no stale cached client state. The proxy.ts HMAC/role check is
+ * the first gate; this store check is the authoritative one.
+ */
+export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, isAuthenticated, isLoading } = useAuth();
-  const router = useRouter();
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value ?? '';
+  const email = token ? verifySession(token) : null;
+  const user = email ? getUserByEmail(email) : null;
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isAuthenticated) {
-      router.replace('/login');
-    } else if (user?.role !== 'admin') {
-      router.replace('/student/dashboard');
-    }
-  }, [isAuthenticated, isLoading, user, router]);
-
-  if (isLoading) return null;
-  if (!isAuthenticated || user?.role !== 'admin') return null;
+  if (!user || user.role !== 'admin') {
+    redirect('/login');
+  }
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -31,3 +33,4 @@ export default function AdminLayout({
     </div>
   );
 }
+

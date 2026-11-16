@@ -16,6 +16,7 @@ import {
 import { assignedDictations } from '@/lib/student-data';
 import { mockDictations } from '@/lib/dictation-transcripts';
 import { cn } from '@/lib/utils';
+import { countScoredWords } from '@/lib/typing/scoring';
 
 export default function StudentDictationsPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -33,11 +34,11 @@ export default function StudentDictationsPage() {
         description="Read a passage, then type it blind. Audio dictations are being rebuilt around YouTube and are coming later."
       />
 
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <p className="text-sm text-amber-800 font-medium">
+      <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+        <p className="text-sm text-warning font-medium">
           🚧 Demo dictations — type the transcript below in blind mode.
         </p>
-        <p className="mt-1 text-xs text-amber-700">
+        <p className="mt-1 text-xs text-warning/80">
           The text under each card is exactly what you will type. Hit{' '}
           <span className="font-medium">Try typing</span> to practise it.
           Results are session-only and cleared on refresh.
@@ -80,7 +81,7 @@ export default function StudentDictationsPage() {
                   <dd className="text-right text-foreground">{d.category}</dd>
                   <dt className="text-muted-foreground">Length</dt>
                   <dd className="text-right font-mono text-foreground">
-                    {transcript.split(/\s+/).filter(Boolean).length} words
+                    {countScoredWords(transcript)} words
                   </dd>
                 </dl>
 
@@ -129,3 +130,4 @@ export default function StudentDictationsPage() {
     </div>
   );
 }
+

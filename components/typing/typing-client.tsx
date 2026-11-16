@@ -29,12 +29,15 @@ import { Button } from '@/components/ui/button';
 import {
   align,
   buildLiveChars,
+  buildTokenDisplayItems,
+  countScoredWords,
   formatClock,
+  MAX_CUSTOM_CHARS,
   normalizeText,
   scoreFromAlignment,
   type AlignmentResult,
   type ScoreResult,
-  type WordDiffEntry,
+  type TokenDiffEntry,
 } from '@/lib/typing/scoring';
 import { generatePassage, recommendDuration } from '@/lib/passage-generator';
 import { mockDictations } from '@/lib/dictation-transcripts';
@@ -550,7 +553,8 @@ export default function TypingClient({
     if (isPublic && !authenticated) return;
 
     const text = sanitizeForTyping(customInput);
-    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    if (text.length > MAX_CUSTOM_CHARS) return;
+    const words = countScoredWords(text);
     if (words < 10) return;
 
     setCustomText(text);
@@ -584,7 +588,7 @@ export default function TypingClient({
             : category;
 
     addSessionResult({
-      id: `${Date.now()}`,
+      id: crypto.randomUUID(),
       practice:
         mode === 'dictation'
           ? dictation.title
@@ -602,6 +606,11 @@ export default function TypingClient({
       missedWords: score.words.missed,
       extraWords: score.words.extra,
       totalWords: score.words.total,
+      correctPunct: score.punctuation.correct,
+      incorrectPunct: score.punctuation.incorrect,
+      missedPunct: score.punctuation.missed,
+      extraPunct: score.punctuation.extra,
+      totalPunct: score.punctuation.total,
       scored: score.scored,
       duration: formatClock(elapsedMs / 1000),
       date: new Date().toISOString().slice(0, 10),
@@ -628,8 +637,7 @@ export default function TypingClient({
     timed ? Math.max(0, duration - elapsedSec) : elapsedSec
   );
 
-  const wordsTyped = (text: string) =>
-    text.trim().split(/\s+/).filter((word) => word.length > 0).length;
+  const wordsTyped = (text: string) => countScoredWords(text);
 
   const incorrectWords = score.words.incorrect;
 
@@ -1009,12 +1017,7 @@ export default function TypingClient({
                 {mockDictations.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.title} —{' '}
-                    {
-                      item.referenceTranscript
-                        .trim()
-                        .split(/\s+/)
-                        .filter(Boolean).length
-                    }{' '}
+                    {countScoredWords(item.referenceTranscript)}{' '}
                     words
                   </option>
                 ))}
@@ -1052,7 +1055,7 @@ export default function TypingClient({
                     {customText.length > 70 ? '…' : ''}
                   </p>
                   <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                    {customText.trim().split(/\s+/).filter(Boolean).length}{' '}
+                    {countScoredWords(customText)}{' '}
                     words
                   </p>
                 </div>
@@ -1734,8 +1737,9 @@ function CustomTextDialog({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cleaned = sanitizeForTyping(customInput);
-  const wordCount = cleaned.trim().split(/\s+/).filter(Boolean).length;
-  const canStart = wordCount >= 10;
+  const wordCount = countScoredWords(cleaned);
+  const overLimit = cleaned.length > MAX_CUSTOM_CHARS;
+  const canStart = wordCount >= 10 && !overLimit;
 
   useEffect(() => {
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -1813,12 +1817,19 @@ function CustomTextDialog({
 
         <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
           <span>
-            {wordCount} {wordCount === 1 ? 'word' : 'words'} · min 10
+            {wordCount} {wordCount === 1 ? 'word' : 'words'} · min 10 ·{' '}
+            {cleaned.length}/{MAX_CUSTOM_CHARS} chars
           </span>
-          {canStart && (
-            <span className="text-success">
-              ~{recommendDuration(cleaned)}s suggested
+          {overLimit ? (
+            <span className="text-destructive">
+              Too long — trim to {MAX_CUSTOM_CHARS} characters
             </span>
+          ) : (
+            canStart && (
+              <span className="text-success">
+                ~{recommendDuration(cleaned)}s suggested
+              </span>
+            )
           )}
         </div>
 
@@ -1953,6 +1964,8 @@ function CompletionPanel({
   onNewFree?: () => void;
 }) {
   const words = score.words;
+  const missedWordCount = words.missed;
+  const missedPunctCount = score.punctuation.missed;
 
   const verdict =
     score.accuracy >= 95
@@ -2039,38 +2052,75 @@ function CompletionPanel({
         <ResultStat label="Time" value={formatClock(elapsedSec)} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border pt-3 font-mono text-xs tabular-nums text-muted-foreground">
-        <span>
-          <span className="font-semibold text-foreground">{words.total}</span>{' '}
-          passage words
-        </span>
-        <span>
-          <span className="font-semibold text-success">{words.correct}</span>{' '}
-          correct
-        </span>
-        <span>
-          <span className="font-semibold text-destructive">
-            {words.incorrect}
-          </span>{' '}
-          incorrect
-        </span>
-        <span>
-          <span className="font-semibold text-muted-foreground">
-            {words.missed}
-          </span>{' '}
-          missed
-        </span>
-        <span>
-          <span className="font-semibold text-destructive">{words.extra}</span>{' '}
-          extra
-        </span>
-        <span className="ml-auto">Gross {score.rawWpm} WPM</span>
+      <div className="border-t border-border pt-3">
+        <div className="overflow-hidden rounded-xl border border-border">
+          <table className="w-full border-collapse text-sm tabular-nums">
+            <thead>
+              <tr className="border-b border-border bg-background text-[10px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-3 py-2 text-left font-medium" />
+                <th className="px-3 py-2 text-right font-medium">
+                  In passage
+                </th>
+                <th className="px-3 py-2 text-right font-medium">Correct</th>
+                <th className="px-3 py-2 text-right font-medium">Wrong</th>
+                <th className="px-3 py-2 text-right font-medium">Missed</th>
+                <th className="px-3 py-2 text-right font-medium">Extra</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-border/60">
+                <td className="px-3 py-2 font-medium text-foreground">
+                  Words
+                </td>
+                <td className="px-3 py-2 text-right text-foreground">
+                  {words.total}
+                </td>
+                <td className="px-3 py-2 text-right text-success">
+                  {words.correct}
+                </td>
+                <td className="px-3 py-2 text-right text-destructive">
+                  {words.incorrect}
+                </td>
+                <td className="px-3 py-2 text-right text-muted-foreground">
+                  {missedWordCount}
+                </td>
+                <td className="px-3 py-2 text-right text-destructive">
+                  {words.extra}
+                </td>
+              </tr>
+              {score.punctuation.total > 0 && (
+                <tr>
+                  <td className="px-3 py-2 font-medium text-foreground">
+                    Punctuation
+                  </td>
+                  <td className="px-3 py-2 text-right text-foreground">
+                    {score.punctuation.total}
+                  </td>
+                  <td className="px-3 py-2 text-right text-success">
+                    {score.punctuation.correct}
+                  </td>
+                  <td className="px-3 py-2 text-right text-destructive">
+                    {score.punctuation.incorrect}
+                  </td>
+                  <td className="px-3 py-2 text-right text-muted-foreground">
+                    {missedPunctCount}
+                  </td>
+                  <td className="px-3 py-2 text-right text-destructive">
+                    {score.punctuation.extra}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs tabular-nums text-muted-foreground">
+          <span className="ml-auto">Gross {score.rawWpm} WPM</span>
+        </div>
       </div>
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Accuracy is exact words divided by evaluated words. Case and punctuation
-        count. Extra words and omissions before later typed words affect
-        accuracy; the untouched passage tail affects completion instead.
+        Accuracy = correct ÷ evaluated items (words + punctuation). Case
+        counts. Missed includes everything you did not type.
       </p>
 
       {!score.scored && (
@@ -2135,20 +2185,13 @@ function CompletionPanel({
                   borderClass="border-warning/40"
                   label="Missed"
                 />
-                {words.extra > 0 && (
-                  <LegendSwatch
-                    className="bg-destructive/30"
-                    borderClass="border-destructive/40"
-                    label="Extra"
-                  />
-                )}
               </div>
             </div>
 
-            <ReviewBlock alignment={score.alignment} reference={reference} />
+            <ReviewBlock alignment={score.alignment} />
           </div>
 
-          <DiffTable entries={score.alignment.wordDiff} />
+          <DiffTable entries={score.alignment.tokenDiff} />
         </div>
       )}
     </div>
@@ -2206,59 +2249,19 @@ function LegendSwatch({
 
 function ReviewBlock({
   alignment,
-  reference,
 }: {
   alignment: AlignmentResult;
-  reference: string;
 }) {
-  const typedOps = useMemo(
-    () => alignment.ops.filter((op) => op.type !== 'delete'),
-    [alignment.ops]
+  const displayItems = useMemo(
+    () => buildTokenDisplayItems(alignment),
+    [alignment]
   );
 
-  const lastAttemptedRefIndex = useMemo(() => {
-    let last = -1;
-
-    for (const op of alignment.ops) {
-      if (op.type === 'equal' || op.type === 'substitute') {
-        last = Math.max(last, op.refIndex);
-      }
-    }
-
-    return last;
-  }, [alignment.ops]);
-
-  const lastAttemptedWordIndex = useMemo(() => {
-    if (lastAttemptedRefIndex < 0) return -1;
-
-    const attemptedPrefix = reference
-      .slice(0, lastAttemptedRefIndex + 1)
-      .trim();
-
-    return attemptedPrefix
-      ? attemptedPrefix.split(/\s+/).length - 1
-      : -1;
-  }, [reference, lastAttemptedRefIndex]);
-
-  const missedWords = useMemo(
-    () =>
-      alignment.wordDiff.filter(
-        (entry) =>
-          entry.kind === 'missed' &&
-          entry.index <= lastAttemptedWordIndex &&
-          entry.expected !== null
-      ),
-    [alignment.wordDiff, lastAttemptedWordIndex]
-  );
-
-  const notReachedCount = useMemo(
-    () =>
-      alignment.wordDiff.filter(
-        (entry) =>
-          entry.kind === 'missed' &&
-          entry.index > lastAttemptedWordIndex
-      ).length,
-    [alignment.wordDiff, lastAttemptedWordIndex]
+  // Everything not typed — skipped words and the untouched tail —
+  // is "missed". tokenDiff lists them in passage order.
+  const missedTokens = useMemo(
+    () => alignment.tokenDiff.filter((entry) => entry.kind === 'missed'),
+    [alignment]
   );
 
   const displayChar = (ch: string) => (ch === ' ' ? '\u00A0' : ch);
@@ -2267,66 +2270,52 @@ function ReviewBlock({
     <div className="overflow-hidden rounded-2xl border border-border/80 bg-background/70 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2">
         <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Your entered text
+          Your typing
         </span>
         <span className="text-[10px] text-muted-foreground">
-          Case and punctuation count
+          Green correct · red wrong
         </span>
       </div>
 
       <div className="max-h-[32rem] overflow-y-auto px-3 py-4 sm:px-5 sm:py-5">
         <p className="whitespace-pre-wrap break-words font-mono text-[15px] leading-[1.9] tracking-[0.01em] sm:text-base sm:leading-[2] lg:text-[17px]">
-          {typedOps.length === 0 ? (
+          {displayItems.length === 0 ? (
             <span className="text-muted-foreground">Nothing typed.</span>
           ) : (
-            typedOps.map((op, index) => {
-              if (op.type === 'equal') {
+            displayItems.map((item, index) => {
+              if (item.state === 'correct') {
                 return (
                   <span key={index} className="font-medium text-success">
-                    {displayChar(op.ch)}
+                    {displayChar(item.ch)}
                   </span>
                 );
               }
 
-              if (op.type === 'substitute') {
-                return (
-                  <span
-                    key={index}
-                    title={`Expected “${op.refCh}”.`}
-                    className="text-destructive underline decoration-destructive decoration-2 underline-offset-[3px]"
-                  >
-                    {displayChar(op.typedCh)}
-                  </span>
-                );
-              }
-
-              if (op.type === 'insert') {
-                return (
-                  <span
-                    key={index}
-                    title="Extra typed character."
-                    className="rounded-sm bg-destructive/15 text-destructive line-through decoration-2"
-                  >
-                    {displayChar(op.ch)}
-                  </span>
-                );
-              }
-
-              return null;
+              return (
+                <span
+                  key={index}
+                  title={
+                    item.expected ? `Expected “${item.expected}”.` : undefined
+                  }
+                  className="text-destructive"
+                >
+                  {displayChar(item.ch)}
+                </span>
+              );
             })
           )}
         </p>
 
-        {missedWords.length > 0 && (
+        {missedTokens.length > 0 && (
           <div className="mt-4 border-t border-border/60 pt-3">
             <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Missed words
+              Missed words &amp; punctuation
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {missedWords.map((entry) => (
+              {missedTokens.map((entry, i) => (
                 <span
-                  key={`missed-${entry.index}`}
-                  title={`Missed passage word ${entry.index + 1}.`}
+                  key={`missed-${entry.index}-${i}`}
+                  title={`Missed ${entry.tokenKind === 'punct' ? 'punctuation' : 'word'} ${entry.index + 1}.`}
                   className="rounded-md bg-warning/10 px-1.5 py-1 font-mono text-[13px] text-warning"
                 >
                   {entry.expected}
@@ -2334,13 +2323,6 @@ function ReviewBlock({
               ))}
             </div>
           </div>
-        )}
-
-        {notReachedCount > 0 && (
-          <p className="mt-3 border-t border-border/60 pt-2 text-[10px] text-muted-foreground">
-            {notReachedCount} {notReachedCount === 1 ? 'word' : 'words'} not
-            reached; the reference is shown above.
-          </p>
         )}
       </div>
     </div>
@@ -2388,7 +2370,7 @@ function DiffSnippet({
   );
 }
 
-function DiffTable({ entries }: { entries: WordDiffEntry[] }) {
+function DiffTable({ entries }: { entries: TokenDiffEntry[] }) {
   const tableRows = useMemo(
     () => entries.filter((entry) => entry.kind !== 'missed'),
     [entries]
@@ -2400,7 +2382,7 @@ function DiffTable({ entries }: { entries: WordDiffEntry[] }) {
   return (
     <div>
       <div className="mb-2 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        <span>Word differences</span>
+        <span>Word &amp; punctuation differences</span>
         <span className="ml-auto font-mono tabular-nums">
           {tableRows.length} wrong/extra
         </span>
@@ -2408,11 +2390,11 @@ function DiffTable({ entries }: { entries: WordDiffEntry[] }) {
 
       {entries.length === 0 ? (
         <p className="rounded-xl border border-success/40 bg-success/10 px-3 py-4 text-sm text-foreground">
-          No differences — every word matched the passage.
+          No differences — every word and punctuation mark matched the passage.
         </p>
       ) : tableRows.length === 0 ? (
         <p className="rounded-xl border border-border bg-background px-3 py-4 text-sm text-muted-foreground">
-          No wrong or extra words. Missed words are marked in the review above.
+          No wrong or extra items. Missed items are marked in the review above.
         </p>
       ) : (
         <div className="overflow-hidden rounded-xl border border-border bg-background">
@@ -2433,6 +2415,9 @@ function DiffTable({ entries }: { entries: WordDiffEntry[] }) {
                   >
                     <td className="px-2 py-2.5 font-mono text-[11px] tabular-nums text-muted-foreground">
                       {entry.index + 1}
+                      <span className="ml-1 text-[9px] uppercase tracking-wider opacity-70">
+                        {entry.tokenKind === 'punct' ? 'punct' : 'word'}
+                      </span>
                     </td>
                     <td className="px-2 py-2.5">
                       <DiffSnippet
@@ -2553,3 +2538,4 @@ function RecentRuns() {
     </div>
   );
 }
+

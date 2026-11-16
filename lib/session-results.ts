@@ -17,15 +17,22 @@ export type SessionResult = {
   netWpm: number;
   /** Gross WPM before the accuracy adjustment. */
   rawWpm: number;
-  /** Exact attempted-word accuracy; untouched passage tail is excluded. */
+  /** Exact attempted-item accuracy; untouched passage tail is excluded. */
   accuracy: number;
   /** How much of the reference was covered (0–100). */
   completion: number;
   correctWords: number;
   incorrectWords: number;
+  /** All unwritten words — skipped mid-passage plus the untouched tail. */
   missedWords: number;
   extraWords: number;
   totalWords: number;
+  correctPunct: number;
+  incorrectPunct: number;
+  /** All unwritten punctuation — skipped plus the untouched tail. */
+  missedPunct: number;
+  extraPunct: number;
+  totalPunct: number;
   /** Whether the attempt met the minimum scoring thresholds. */
   scored: boolean;
   duration: string;
@@ -66,3 +73,4 @@ export function subscribeSessionResults(fn: () => void): () => void {
 }
 
 export const SESSION_RESULT_LIMIT = MAX_RESULTS;
+

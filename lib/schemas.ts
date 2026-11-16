@@ -32,6 +32,7 @@
  */
 
 import { z } from 'zod';
+import { countScoredWords } from './typing/scoring';
 
 /* ─── Shared primitives ──────────────────────────────────── */
 
@@ -66,7 +67,6 @@ export const amountSchema = z
 export const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  role: z.enum(['student', 'admin']).default('student'),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
@@ -154,11 +154,11 @@ export const typingPassageSchema = z.object({
   text: z
     .string()
     .refine(
-      (t) => t.trim().split(/\s+/).filter(Boolean).length >= 10,
+      (t) => countScoredWords(t) >= 10,
       'Passage must be at least 10 words'
     )
     .refine(
-      (t) => t.trim().split(/\s+/).filter(Boolean).length <= 500,
+      (t) => countScoredWords(t) <= 500,
       'Passage is too long'
     ),
   status: dictationStatusSchema.default('Draft'),
@@ -175,12 +175,12 @@ export const customPassageSchema = z.object({
   text: z
     .string()
     .refine(
-      (t) => t.trim().split(/\s+/).filter(Boolean).length >= 10,
+      (t) => countScoredWords(t) >= 10,
       'Paste at least 10 words of text'
     )
     .refine(
-      (t) => t.trim().split(/\s+/).filter(Boolean).length <= 2_000,
-      'Text is too long'
+      (t) => t.length <= 5_000,
+      'Text is too long (max 5,000 characters)'
     ),
   title: z.string().max(120).optional(),
 });
@@ -257,3 +257,4 @@ export const sessionSubmissionSchema = z.object({
   completed: z.boolean(),
 });
 export type SessionSubmission = z.infer<typeof sessionSubmissionSchema>;
+

@@ -2,8 +2,13 @@ import { StudentCta, StudentStatusBadge } from '@/components/student/student-hea
 import { StudentGreeting } from '@/components/student/student-greeting';
 import { assignedDictations } from '@/lib/student-data';
 import { mockDictations } from '@/lib/dictation-transcripts';
+import { countScoredWords } from '@/lib/typing/scoring';
 import Link from 'next/link';
 import { Headphones, BarChart3, Keyboard, AlignLeft } from 'lucide-react';
+
+// Availability is date-based — must be evaluated per request, not
+// frozen at build time.
+export const dynamic = 'force-dynamic';
 
 export default function StudentDashboardPage() {
   const now = new Date();
@@ -15,18 +20,18 @@ export default function StudentDashboardPage() {
     .slice(0, 6);
   const wordCount = (id: string) => {
     const t = mockDictations.find((m) => m.id === id)?.referenceTranscript ?? '';
-    return t.split(/\s+/).filter(Boolean).length;
+    return countScoredWords(t);
   };
 
   return (
     <div className="space-y-10">
       <StudentGreeting description="Pick up where you left off, or jump into a new dictation." />
 
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <p className="text-sm text-amber-800 font-medium">
+      <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+        <p className="text-sm text-warning font-medium">
           🚧 Under progress — results are not stored yet.
         </p>
-        <p className="mt-1 text-xs text-amber-700">
+        <p className="mt-1 text-xs text-warning/80">
           Scores are shown on the typing page for the current test only and are
           cleared on refresh. Saved progress will appear here once the database
           is connected.
@@ -126,3 +131,4 @@ function ShortcutCard({
     </Link>
   );
 }
+

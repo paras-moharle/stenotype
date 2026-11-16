@@ -51,11 +51,11 @@ export default function StudentResultsPage() {
     <div className="space-y-10">
       <StudentHeader title="My results" description="Results for your current visit. These are not saved." />
 
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <p className="text-sm font-medium text-amber-800">
+      <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+        <p className="text-sm font-medium text-warning">
           🚧 Session-only results — not stored.
         </p>
-        <p className="mt-1 text-xs text-amber-700">
+        <p className="mt-1 text-xs text-warning/80">
           You can finish up to {SESSION_RESULT_LIMIT} tests without refreshing.
           A full refresh clears everything. Saved history will appear once the
           database is connected.
@@ -238,3 +238,4 @@ function SummaryStat({
     </div>
   );
 }
+

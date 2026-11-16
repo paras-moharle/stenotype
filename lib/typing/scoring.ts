@@ -5,7 +5,29 @@
  *   - runs of whitespace collapse to a single space
  *   - leading / trailing whitespace is ignored
  *   - word matching is case-sensitive
- *   - punctuation is counted
+ *   - punctuation is its own scored item (not glued to the word)
+ *
+ * Scoring model (single token alignment for scoring + review):
+ *   - Text is tokenized into word tokens and punctuation tokens.
+ *     A word token is [A-Za-z0-9]+ with internal ' or - between
+ *     alphanumerics (so "don't" and "cross-examination" stay whole).
+ *     A punctuation token is a run of non-alphanumeric, non-space
+ *     characters (so "evening." -> "evening" + ".").
+ *   - Words and punctuation are aligned together in one
+ *     start-anchored token alignment (exact prefix/suffix trim +
+ *     Levenshtein DP). Accuracy, review colors, and
+ *     missed/not-reached all derive from this one alignment.
+ *   - Character alignment is kept only for completion / errors /
+ *     distance (character coverage). It is NOT used to decide
+ *     which words were reached — that was the source of the
+ *     "colors vs missed words disagree" bug.
+ *   - A missed token before a later typed token is "missed"
+ *     (skipped). A missed token after the last typed token is
+ *     "not reached" (untouched tail) — except trailing
+ *     punctuation after the last typed word, which is "missed"
+ *     (the user finished the words and omitted the punctuation).
+ *     Only missed tokens count in the accuracy denominator;
+ *     not-reached tokens count in completion instead.
  */
 
 export type CharState = 'correct' | 'wrong' | 'missed' | 'extra';
@@ -22,18 +44,40 @@ export type AlignmentOp =
   | { type: 'delete'; refIndex: number; ch: string }
   | { type: 'insert'; typedIndex: number; ch: string };
 
-export type WordStats = {
-  /** Reference words in the passage. */
+export type TokenKind = 'word' | 'punct';
+
+export type Token = {
+  text: string;
+  kind: TokenKind;
+  start: number;
+  end: number;
+};
+
+export type TokenAlignmentOp =
+  | { type: 'equal'; refIndex: number; typedIndex: number }
+  | { type: 'substitute'; refIndex: number; typedIndex: number }
+  | { type: 'delete'; refIndex: number }
+  | { type: 'insert'; typedIndex: number };
+
+export type TokenStats = {
+  /** Reference tokens of this kind in the passage. */
   total: number;
-  /** Reference words typed exactly, including case and punctuation. */
+  /** Reference tokens typed exactly (case-sensitive). */
   correct: number;
-  /** Reference words paired with a different typed word. */
+  /** Reference tokens paired with a different typed token. */
   incorrect: number;
-  /** Reference words with no paired typed word. */
+  /** Reference tokens with no paired typed token (skipped + tail). */
   missed: number;
-  /** Typed words with no paired reference word. */
+  /** Typed tokens with no paired reference token. */
   extra: number;
 };
+
+/**
+ * Words-only stats. Kept under the old name for compatibility;
+ * punctuation now lives in `punctuation` / `items` instead of
+ * being glued onto words.
+ */
+export type WordStats = TokenStats;
 
 export type DisplayItem = {
   ch: string;
@@ -45,17 +89,22 @@ export type DisplayItem = {
 
 export type WordDiffKind = 'wrong' | 'missed' | 'extra';
 
-export type WordDiffEntry = {
-  /** 0-based reference word position; length means after the last word. */
+export type TokenDiffEntry = {
+  /** 0-based reference token position; length means after the last token. */
   index: number;
   expected: string | null;
   actual: string | null;
   kind: WordDiffKind;
+  tokenKind: TokenKind;
 };
+
+/** @deprecated Use TokenDiffEntry. Kept as an alias for compatibility. */
+export type WordDiffEntry = TokenDiffEntry;
 
 export type AlignmentResult = {
   reference: string;
   typed: string;
+  /** Character-level ops (completion / errors only — not for review reach). */
   ops: AlignmentOp[];
   /** Character-level Levenshtein distance. */
   distance: number;
@@ -70,13 +119,35 @@ export type AlignmentResult = {
   substitutions: number;
   deletions: number;
   insertions: number;
+  /** Words-only stats (punctuation excluded). */
   words: WordStats;
-  wordDiff: WordDiffEntry[];
+  /** Punctuation-only stats. */
+  punctuation: TokenStats;
+  /** Combined words + punctuation stats (drives accuracy). */
+  items: TokenStats;
+  /** Token-level diffs (words + punctuation). */
+  tokenDiff: TokenDiffEntry[];
+  /** @deprecated Use tokenDiff. Kept as an alias. */
+  wordDiff: TokenDiffEntry[];
+  /** Reference scored tokens (words + punctuation) with char offsets. */
+  refTokens: Token[];
+  /** Typed scored tokens with char offsets. */
+  typedTokens: Token[];
+  /** Start-anchored token alignment (single source for scoring + review). */
+  tokenOps: TokenAlignmentOp[];
   /**
-   * Words included in accuracy: all typed words plus skipped reference
-   * words before later typed words. The untouched reference tail is out.
+   * Items included in accuracy: all typed tokens plus skipped
+   * reference tokens before later typed tokens. The untouched
+   * reference tail is out.
+   */
+  evaluatedItems: number;
+  /**
+   * Words-only evaluated count (typed words + internal missed words).
+   * Kept for compatibility; accuracy now uses evaluatedItems.
    */
   evaluatedWords: number;
+  /** Punctuation-only evaluated count. */
+  evaluatedPunct: number;
 };
 
 export type ScoreResult = {
@@ -86,7 +157,7 @@ export type ScoreResult = {
   correct: number;
   /** Unresolved character edits in the attempted portion. */
   errors: number;
-  /** Exact attempted-word accuracy, 0–100; untouched tail is excluded. */
+  /** Exact attempted-item accuracy, 0–100; untouched tail is excluded. */
   accuracy: number;
   /** Reference characters covered, 0–100. */
   completion: number;
@@ -94,57 +165,85 @@ export type ScoreResult = {
   wpm: number;
   /** Gross WPM: typed characters / 5 / elapsed minutes. */
   rawWpm: number;
-  /** Gross WPM adjusted by attempted-word accuracy. */
+  /** Gross WPM adjusted by attempted-item accuracy. */
   netWpm: number;
   elapsedMs: number;
   /** False when the attempt is too short to score reliably. */
   scored: boolean;
+  /** Words-only stats. */
   words: WordStats;
+  /** Punctuation-only stats. */
+  punctuation: TokenStats;
+  /** Combined words + punctuation stats. */
+  items: TokenStats;
   alignment: AlignmentResult;
 };
 
 export const MIN_SCORED_ELAPSED_MS = 1000;
 export const MIN_SCORED_TYPED_CHARS = 5;
 
+/**
+ * Hard cap for any reference / typed string fed to align().
+ * The character DP is O(n·m); without a cap a very long custom
+ * paste can freeze the tab. Custom text is capped at
+ * MAX_CUSTOM_CHARS in the UI; this is the engine-level guard.
+ */
+export const MAX_ALIGN_CHARS = 20000;
+
+/** Maximum custom-text length accepted by the UI (chars, post-sanitize). */
+export const MAX_CUSTOM_CHARS = 5000;
+
 export function normalizeText(input: string): string {
   return input.replace(/\s+/g, ' ').trim();
 }
 
-type Token = { text: string; start: number; end: number };
-
-function tokenize(text: string): Token[] {
+/**
+ * Tokenize normalized text into scored tokens.
+ * Words keep internal ' and - (don't, cross-examination);
+ * punctuation runs become their own tokens (evening. -> evening + .).
+ * Spaces are separators and are not scored.
+ */
+export function tokenizeScored(text: string): Token[] {
   const tokens: Token[] = [];
-  const re = /\S+/g;
+  const re = /[A-Za-z0-9]+(?:['-][A-Za-z0-9]+)*|[^A-Za-z0-9\s]+/g;
   let match: RegExpExecArray | null;
 
   while ((match = re.exec(text)) !== null) {
+    const tokenText = match[0];
+    const kind: TokenKind = /[A-Za-z0-9]/.test(tokenText[0])
+      ? 'word'
+      : 'punct';
     tokens.push({
-      text: match[0],
+      text: tokenText,
+      kind,
       start: match.index,
-      end: match.index + match[0].length,
+      end: match.index + tokenText.length,
     });
   }
 
   return tokens;
 }
 
-type WordAlignmentOp =
-  | { type: 'equal'; refIndex: number; typedIndex: number }
-  | { type: 'substitute'; refIndex: number; typedIndex: number }
-  | { type: 'delete'; refIndex: number }
-  | { type: 'insert'; typedIndex: number };
+/** Count word tokens (alphanumeric chunks) — for the custom-text minimum. */
+export function countScoredWords(text: string): number {
+  return tokenizeScored(normalizeText(text)).filter(
+    (token) => token.kind === 'word'
+  ).length;
+}
 
 /**
- * Align word tokens exactly. A substitution represents one wrong word;
- * insertions and deletions do not shift later exact matches.
+ * Align scored tokens exactly. A substitution represents one wrong
+ * token; insertions and deletions do not shift later exact matches.
+ * Prefix/suffix trim anchors the alignment to the start, so typed
+ * text matches the earliest occurrence, not a later repeat.
  */
-function alignWords(
+function alignTokens(
   reference: Token[],
   typed: Token[]
-): WordAlignmentOp[] {
+): TokenAlignmentOp[] {
   const n = reference.length;
   const m = typed.length;
-  const ops: WordAlignmentOp[] = [];
+  const ops: TokenAlignmentOp[] = [];
 
   let prefix = 0;
   while (
@@ -261,9 +360,17 @@ function alignWords(
   return ops;
 }
 
+function emptyStats(): TokenStats {
+  return { total: 0, correct: 0, incorrect: 0, missed: 0, extra: 0 };
+}
+
 /**
  * Align normalized strings with Levenshtein distance and backtrace.
  * Exact common prefixes and suffixes are matched first.
+ *
+ * Returns character ops (for completion/errors) plus the single
+ * token alignment (for accuracy + review). Throws RangeError if
+ * either string exceeds MAX_ALIGN_CHARS.
  */
 export function align(
   referenceInput: string,
@@ -271,6 +378,16 @@ export function align(
 ): AlignmentResult {
   const reference = normalizeText(referenceInput);
   const typed = normalizeText(typedInput);
+
+  if (
+    reference.length > MAX_ALIGN_CHARS ||
+    typed.length > MAX_ALIGN_CHARS
+  ) {
+    throw new RangeError(
+      `align() input exceeds ${MAX_ALIGN_CHARS} characters.`
+    );
+  }
+
   const n = reference.length;
   const m = typed.length;
   const ops: AlignmentOp[] = [];
@@ -441,72 +558,139 @@ export function align(
     }
   }
 
-  const refTokens = tokenize(reference);
-  const typedTokens = tokenize(typed);
-  const wordOps = alignWords(refTokens, typedTokens);
+  // ── Single token alignment (scoring + review) ──
+  const refTokens = tokenizeScored(reference);
+  const typedTokens = tokenizeScored(typed);
+  const tokenOps = alignTokens(refTokens, typedTokens);
 
-  const words: WordStats = {
-    total: refTokens.length,
-    correct: 0,
-    incorrect: 0,
-    missed: 0,
-    extra: 0,
-  };
-  const wordDiff: WordDiffEntry[] = [];
+  const words = emptyStats();
+  const punctuation = emptyStats();
+  const items = emptyStats();
+  const tokenDiff: TokenDiffEntry[] = [];
 
-  // A skipped reference word is included in accuracy only if a typed
-  // word follows it. This excludes the untouched tail.
+  for (const token of refTokens) {
+    items.total += 1;
+    if (token.kind === 'word') words.total += 1;
+    else punctuation.total += 1;
+  }
+
+  // A skipped reference token is included in accuracy only if a
+  // typed token follows it. This excludes the untouched tail.
+  // Exception: trailing punctuation after the last typed word is
+  // missed (the user finished the words and omitted the punct).
   const internalMisses = new Set<number>();
-  let hasTypedWordAfter = false;
+  const internalMissedWords = new Set<number>();
+  const internalMissedPunct = new Set<number>();
+  let hasTypedTokenAfter = false;
 
-  for (let i = wordOps.length - 1; i >= 0; i -= 1) {
-    const op = wordOps[i];
+  for (let i = tokenOps.length - 1; i >= 0; i -= 1) {
+    const op = tokenOps[i];
 
-    if (op.type === 'delete' && hasTypedWordAfter) {
+    if (op.type === 'delete' && hasTypedTokenAfter) {
       internalMisses.add(op.refIndex);
+      if (refTokens[op.refIndex].kind === 'word') {
+        internalMissedWords.add(op.refIndex);
+      } else {
+        internalMissedPunct.add(op.refIndex);
+      }
     }
 
     if (op.type !== 'delete') {
-      hasTypedWordAfter = true;
+      hasTypedTokenAfter = true;
+    }
+  }
+
+  let lastAttemptedTokenIndex = -1;
+  let lastWordIndex = -1;
+
+  for (let i = 0; i < refTokens.length; i += 1) {
+    if (refTokens[i].kind === 'word') lastWordIndex = i;
+  }
+
+  for (const op of tokenOps) {
+    if (op.type === 'equal' || op.type === 'substitute') {
+      lastAttemptedTokenIndex = Math.max(
+        lastAttemptedTokenIndex,
+        op.refIndex
+      );
+    }
+  }
+
+  const reachedLastWord =
+    typedTokens.length > 0 &&
+    lastWordIndex !== -1 &&
+    lastAttemptedTokenIndex >= lastWordIndex;
+
+  if (reachedLastWord) {
+    for (const op of tokenOps) {
+      if (
+        op.type === 'delete' &&
+        op.refIndex > lastAttemptedTokenIndex &&
+        refTokens[op.refIndex].kind === 'punct'
+      ) {
+        internalMisses.add(op.refIndex);
+        internalMissedPunct.add(op.refIndex);
+      }
     }
   }
 
   let refCursor = 0;
 
-  for (const op of wordOps) {
+  for (const op of tokenOps) {
     if (op.type === 'equal') {
-      words.correct += 1;
+      const kind = refTokens[op.refIndex].kind;
+      items.correct += 1;
+      if (kind === 'word') words.correct += 1;
+      else punctuation.correct += 1;
       refCursor = op.refIndex + 1;
     } else if (op.type === 'substitute') {
-      words.incorrect += 1;
-      wordDiff.push({
+      const kind = refTokens[op.refIndex].kind;
+      items.incorrect += 1;
+      if (kind === 'word') words.incorrect += 1;
+      else punctuation.incorrect += 1;
+      tokenDiff.push({
         index: op.refIndex,
         expected: refTokens[op.refIndex].text,
         actual: typedTokens[op.typedIndex].text,
         kind: 'wrong',
+        tokenKind: kind,
       });
       refCursor = op.refIndex + 1;
     } else if (op.type === 'delete') {
-      words.missed += 1;
-      wordDiff.push({
+      const kind = refTokens[op.refIndex].kind;
+      items.missed += 1;
+      if (kind === 'word') words.missed += 1;
+      else punctuation.missed += 1;
+      tokenDiff.push({
         index: op.refIndex,
         expected: refTokens[op.refIndex].text,
         actual: null,
         kind: 'missed',
+        tokenKind: kind,
       });
       refCursor = op.refIndex + 1;
     } else {
-      words.extra += 1;
-      wordDiff.push({
+      const kind = typedTokens[op.typedIndex].kind;
+      items.extra += 1;
+      if (kind === 'word') words.extra += 1;
+      else punctuation.extra += 1;
+      tokenDiff.push({
         index: refCursor,
         expected: null,
         actual: typedTokens[op.typedIndex].text,
         kind: 'extra',
+        tokenKind: kind,
       });
     }
   }
 
-  const evaluatedWords = typedTokens.length + internalMisses.size;
+  const evaluatedItems = typedTokens.length + internalMisses.size;
+  const evaluatedWords =
+    typedTokens.filter((token) => token.kind === 'word').length +
+    internalMissedWords.size;
+  const evaluatedPunct =
+    typedTokens.filter((token) => token.kind === 'punct').length +
+    internalMissedPunct.size;
 
   return {
     reference,
@@ -521,9 +705,72 @@ export function align(
     deletions,
     insertions,
     words,
-    wordDiff,
+    punctuation,
+    items,
+    tokenDiff,
+    wordDiff: tokenDiff,
+    refTokens,
+    typedTokens,
+    tokenOps,
+    evaluatedItems,
     evaluatedWords,
+    evaluatedPunct,
   };
+}
+
+/**
+ * Split token diffs into genuinely skipped ("missed") vs untouched
+ * tail ("not reached"), using the token alignment only. A missed
+ * token at or before the last typed token is missed; after it is
+ * not reached — except trailing punctuation after the last typed
+ * word, which is missed. Extra/wrong entries are separate.
+ */
+export function splitMissedNotReached(alignment: AlignmentResult): {
+  missed: TokenDiffEntry[];
+  notReached: TokenDiffEntry[];
+  wrong: TokenDiffEntry[];
+  extra: TokenDiffEntry[];
+} {
+  let lastAttemptedTokenIndex = -1;
+  let lastWordIndex = -1;
+
+  for (let i = 0; i < alignment.refTokens.length; i += 1) {
+    if (alignment.refTokens[i].kind === 'word') lastWordIndex = i;
+  }
+
+  for (const op of alignment.tokenOps) {
+    if (op.type === 'equal' || op.type === 'substitute') {
+      lastAttemptedTokenIndex = Math.max(
+        lastAttemptedTokenIndex,
+        op.refIndex
+      );
+    }
+  }
+
+  const reachedLastWord =
+    alignment.typedTokens.length > 0 &&
+    lastWordIndex !== -1 &&
+    lastAttemptedTokenIndex >= lastWordIndex;
+
+  const missed: TokenDiffEntry[] = [];
+  const notReached: TokenDiffEntry[] = [];
+  const wrong: TokenDiffEntry[] = [];
+  const extra: TokenDiffEntry[] = [];
+
+  for (const entry of alignment.tokenDiff) {
+    if (entry.kind === 'wrong') wrong.push(entry);
+    else if (entry.kind === 'extra') extra.push(entry);
+    else if (
+      entry.index <= lastAttemptedTokenIndex ||
+      (reachedLastWord && entry.tokenKind === 'punct')
+    ) {
+      missed.push(entry);
+    } else {
+      notReached.push(entry);
+    }
+  }
+
+  return { missed, notReached, wrong, extra };
 }
 
 function itemsFromOps(ops: AlignmentOp[]): DisplayItem[] {
@@ -552,8 +799,94 @@ function itemsFromOps(ops: AlignmentOp[]): DisplayItem[] {
   });
 }
 
+/**
+ * Character-level display items (legacy). Colors come from the
+ * character alignment. Prefer buildTokenDisplayItems() for review,
+ * which colors from the single token alignment.
+ */
 export function buildDisplayItems(alignment: AlignmentResult): DisplayItem[] {
   return itemsFromOps(alignment.ops);
+}
+
+/**
+ * Token-based display items for the review: exactly the typed
+ * text, one entry per typed character (plus single-space
+ * separators). A token is either right or wrong — correct tokens
+ * are green, wrong and extra typed tokens are red. Nothing else
+ * is inserted: missed and not-reached items have no typed chars
+ * and are reported via splitMissedNotReached() instead.
+ */
+export function buildTokenDisplayItems(
+  alignment: AlignmentResult
+): DisplayItem[] {
+  const items: DisplayItem[] = [];
+  const { refTokens, typedTokens, tokenOps } = alignment;
+
+  const pushSeparator = (typedToken: (typeof typedTokens)[number]) => {
+    // Separator space after this typed token, only when the
+    // typed text actually has one (word->punct has none).
+    if (
+      typedToken.end < alignment.typed.length &&
+      alignment.typed[typedToken.end] === ' '
+    ) {
+      items.push({
+        ch: ' ',
+        state: 'correct',
+        typedIndex: typedToken.end,
+      });
+    }
+  };
+
+  for (const op of tokenOps) {
+    if (op.type === 'equal') {
+      const refToken = refTokens[op.refIndex];
+      const typedToken = typedTokens[op.typedIndex];
+
+      for (let k = 0; k < typedToken.text.length; k += 1) {
+        items.push({
+          ch: typedToken.text[k],
+          state: 'correct',
+          refIndex: refToken.start + k,
+          typedIndex: typedToken.start + k,
+        });
+      }
+
+      pushSeparator(typedToken);
+    } else if (op.type === 'substitute') {
+      const refToken = refTokens[op.refIndex];
+      const typedToken = typedTokens[op.typedIndex];
+
+      // The whole word is wrong, so all its chars are red — a
+      // partially matching word (e.g. "tribnal" for "tribunal")
+      // must never look green.
+      for (let k = 0; k < typedToken.text.length; k += 1) {
+        items.push({
+          ch: typedToken.text[k],
+          state: 'wrong',
+          refIndex: refToken.start + k,
+          typedIndex: typedToken.start + k,
+          expected: refToken.text,
+        });
+      }
+
+      pushSeparator(typedToken);
+    } else if (op.type === 'insert') {
+      const typedToken = typedTokens[op.typedIndex];
+
+      for (let k = 0; k < typedToken.text.length; k += 1) {
+        items.push({
+          ch: typedToken.text[k],
+          state: 'wrong',
+          typedIndex: typedToken.start + k,
+        });
+      }
+
+      pushSeparator(typedToken);
+    }
+    // deletes (missed tokens) contribute no typed chars.
+  }
+
+  return items;
 }
 
 export type LiveCharState = 'correct' | 'wrong' | 'current' | 'untyped';
@@ -596,15 +929,17 @@ export function scoreFromAlignment(
   const t = alignment.typedLength;
 
   const accuracy =
-    alignment.words.total === 0 && alignment.evaluatedWords === 0
+    alignment.items.total === 0 && alignment.evaluatedItems === 0
       ? 100
-      : alignment.evaluatedWords === 0
+      : alignment.evaluatedItems === 0
         ? 0
         : Math.max(
             0,
             Math.min(
               100,
-              Math.floor((alignment.words.correct / alignment.evaluatedWords) * 100)
+              Math.floor(
+                (alignment.items.correct / alignment.evaluatedItems) * 100
+              )
             )
           );
 
@@ -641,6 +976,8 @@ export function scoreFromAlignment(
     elapsedMs: elapsed,
     scored,
     words: alignment.words,
+    punctuation: alignment.punctuation,
+    items: alignment.items,
     alignment,
   };
 }
@@ -662,3 +999,4 @@ export function formatClock(totalSeconds: number): string {
 export function formatElapsed(ms: number): string {
   return formatClock(ms / 1000);
 }
+

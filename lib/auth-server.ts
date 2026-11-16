@@ -1,6 +1,11 @@
-import { createHmac, timingSafeEqual } from 'crypto';
 import {
-  createSession,
+  createHmac,
+  randomBytes,
+  randomUUID,
+  scryptSync,
+  timingSafeEqual,
+} from 'crypto';
+import {
   getSession,
   isTokenRevoked,
   revokeSessionByToken,
@@ -11,6 +16,17 @@ import {
 // Credentials live in environment variables and are NEVER
 // bundled into the browser. The client only talks to /api/login
 // and receives an HTTP-only cookie.
+//
+// Hardening (Chunk 4):
+//  - AUTH_SECRET is read lazily, so importing this module never
+//    throws on public pages that don't need auth.
+//  - Env passwords are scrypt-hashed once at startup; plaintext
+//    is never stored, and comparison is constant-time.
+//  - Session tokens use crypto.randomUUID() for the jti.
+//  - No legacy plain-email token fallback (old tokens are dead).
+//  - verifySession does NOT re-register unknown tokens — a valid
+//    HMAC alone is not enough; the session must exist in the
+//    store. After a restart, users simply sign in again.
 // ─────────────────────────────────────────────────────────────
 
 export type ServerUser = {
@@ -20,7 +36,10 @@ export type ServerUser = {
   role: 'admin' | 'student';
 };
 
-type Account = ServerUser & { password: string };
+type Account = ServerUser & {
+  salt: Buffer;
+  passwordHash: Buffer;
+};
 
 // Login is valid for 4 hours (short window, admin can kill-switch anytime).
 export const SESSION_MAX_AGE_SECONDS = 4 * 60 * 60;
@@ -44,36 +63,96 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-const AUTH_SECRET = requiredEnv('AUTH_SECRET');
+// Lazy secret: read on first use (and cache) so that merely
+// importing this module — e.g. transitively from a public page —
+// never throws just because auth env is absent.
+let cachedSecret: string | null = null;
+function getAuthSecret(): string {
+  if (cachedSecret === null) {
+    cachedSecret = requiredEnv('AUTH_SECRET');
+  }
+  return cachedSecret;
+}
 
+function hashPassword(password: string, salt: Buffer): Buffer {
+  return scryptSync(password, salt, 64);
+}
+
+// Env passwords are hashed once (per process) with a random salt.
+// The plaintext from env is used only during this startup step and
+// is never retained in memory afterwards.
+let cachedAccounts: Account[] | null = null;
 function accounts(): Account[] {
-  return [
+  if (cachedAccounts) return cachedAccounts;
+
+  const defs = [
     {
       id: 'u1',
       name: 'Abhijeet Chahare',
       email: requiredEnv('STUDENT_EMAIL').trim(),
-      role: 'student',
+      role: 'student' as const,
       password: requiredEnv('STUDENT_PASSWORD'),
     },
     {
       id: 'u2',
       name: 'Paras Moharle',
       email: requiredEnv('ADMIN_EMAIL').trim(),
-      role: 'admin',
+      role: 'admin' as const,
       password: requiredEnv('ADMIN_PASSWORD'),
     },
   ];
+
+  if (
+    defs[0].email.toLowerCase() === defs[1].email.toLowerCase()
+  ) {
+    throw new Error(
+      'STUDENT_EMAIL and ADMIN_EMAIL must be different accounts.'
+    );
+  }
+
+  cachedAccounts = defs.map((def) => {
+    const salt = randomBytes(16);
+    return {
+      id: def.id,
+      name: def.name,
+      email: def.email,
+      role: def.role,
+      salt,
+      passwordHash: hashPassword(def.password, salt),
+    };
+  });
+
+  return cachedAccounts;
 }
 
-export function findAccount(email: string, password: string): ServerUser | null {
+function publicUser(account: Account): ServerUser {
+  return {
+    id: account.id,
+    name: account.name,
+    email: account.email,
+    role: account.role,
+  };
+}
+
+export function findAccount(
+  email: string,
+  password: string
+): ServerUser | null {
   const normalized = email.trim().toLowerCase();
   const account = accounts().find(
     (a) => a.email.toLowerCase() === normalized
   );
   if (!account) return null;
-  if (account.password !== password) return null;
-  const { password: _pw, ...user } = account;
-  return user;
+
+  const candidate = hashPassword(password, account.salt);
+  if (
+    candidate.length !== account.passwordHash.length ||
+    !timingSafeEqual(candidate, account.passwordHash)
+  ) {
+    return null;
+  }
+
+  return publicUser(account);
 }
 
 export function getUserByEmail(email: string): ServerUser | null {
@@ -81,9 +160,7 @@ export function getUserByEmail(email: string): ServerUser | null {
   const account = accounts().find(
     (a) => a.email.toLowerCase() === normalized
   );
-  if (!account) return null;
-  const { password: _pw, ...user } = account;
-  return user;
+  return account ? publicUser(account) : null;
 }
 
 /* ─── Signed session token (HMAC-SHA256) ─────────────────── */
@@ -98,19 +175,21 @@ export function signToken(email: string): string {
   const data: TokenPayload = {
     email: email.trim().toLowerCase(),
     exp: Date.now() + SESSION_MAX_AGE_SECONDS * 1000,
-    jti: Math.random().toString(36).slice(2),
+    jti: randomUUID(),
   };
   const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
-  const sig = createHmac('sha256', AUTH_SECRET)
+  const sig = createHmac('sha256', getAuthSecret())
     .update(payload)
     .digest('base64url');
   return `${payload}.${sig}`;
 }
 
 export function verifyToken(token: string): string | null {
-  const [payload, sig] = token.split('.');
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
   if (!payload || !sig) return null;
-  const expected = createHmac('sha256', AUTH_SECRET)
+  const expected = createHmac('sha256', getAuthSecret())
     .update(payload)
     .digest('base64url');
   try {
@@ -134,10 +213,8 @@ export function verifyToken(token: string): string | null {
       return parsed.email.trim().toLowerCase();
     }
   } catch {
-    // Backwards-compatible fallback for older plain-email tokens
-    if (decoded.includes('@')) {
-      return decoded.trim().toLowerCase();
-    }
+    // Not a JSON payload — invalid. The old plain-email fallback
+    // (which never expired) has been removed on purpose.
   }
   return null;
 }
@@ -145,6 +222,11 @@ export function verifyToken(token: string): string | null {
 /**
  * Verify a session token and confirm it exists in the active session store.
  * Returns the email if valid, null otherwise.
+ *
+ * A valid HMAC signature alone is NOT enough: the token must also be
+ * present in the store. This keeps revocation and the single-active-
+ * session rule intact across restarts — after a restart the store is
+ * empty, so existing cookies simply require a fresh sign-in.
  */
 export function verifySession(token: string): string | null {
   if (isTokenRevoked(token)) return null;
@@ -153,18 +235,8 @@ export function verifySession(token: string): string | null {
   if (!email) return null;
 
   const session = getSession(token);
-  if (session) {
-    if (session.email.toLowerCase() !== email.toLowerCase()) return null;
-    return email;
-  }
-
-  // If the token has a valid HMAC signature and has not been revoked,
-  // re-register it in the in-memory store (recovers seamlessly after HMR / dev restart).
-  createSession({
-    email,
-    token,
-    ttlSeconds: SESSION_MAX_AGE_SECONDS,
-  });
+  if (!session) return null;
+  if (session.email.toLowerCase() !== email.toLowerCase()) return null;
   return email;
 }
 
@@ -174,3 +246,4 @@ export function verifySession(token: string): string | null {
 export function revokeToken(token: string): void {
   revokeSessionByToken(token);
 }
+

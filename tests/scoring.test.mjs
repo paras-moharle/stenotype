@@ -3,464 +3,317 @@ import assert from 'node:assert/strict';
 
 import {
   align,
-  buildDisplayItems,
-  buildLiveChars,
+  buildTokenDisplayItems,
   computeScore,
-  formatClock,
-  normalizeText,
-  scoreFromAlignment,
-  MIN_SCORED_ELAPSED_MS,
-  MIN_SCORED_TYPED_CHARS,
+  countScoredWords,
+  splitMissedNotReached,
+  tokenizeScored,
+  MAX_ALIGN_CHARS,
 } from '../lib/typing/scoring.ts';
 
-const PASSAGE =
-  'The court shall proceed with the examination of the witness in accordance ' +
-  'with the provisions of law and all parties shall be given a fair ' +
-  'opportunity to present their arguments before the honorable judge ' +
-  'delivers the final verdict.';
+const score = (ref, typed, elapsed = 10_000) =>
+  computeScore(ref, typed, elapsed);
 
-const WORD_COUNT = PASSAGE.trim().split(/\s+/).length;
-
-/* ─── Normalization ──────────────────────────────────────── */
-
-test('normalizeText collapses whitespace, trims, and keeps case', () => {
-  assert.equal(normalizeText('  a   b \n c  '), 'a b c');
-  assert.equal(normalizeText('Case'), 'Case');
-  assert.notEqual(normalizeText('case'), normalizeText('Case'));
-  assert.equal(normalizeText(''), '');
+test('exact match scores 100% accuracy and completion', () => {
+  const s = score('The cat sat', 'The cat sat');
+  assert.equal(s.accuracy, 100);
+  assert.equal(s.completion, 100);
+  assert.equal(s.words.correct, 3);
+  assert.equal(s.punctuation.total, 0);
+  assert.equal(s.items.correct, 3);
+  assert.equal(s.scored, true);
 });
 
-/* ─── Alignment and word statistics ──────────────────────── */
-
-test('exact text has zero distance and 100% accuracy/completion', () => {
-  const score = computeScore(PASSAGE, PASSAGE, 30_000);
-
-  assert.equal(score.alignment.distance, 0);
-  assert.equal(score.accuracy, 100);
-  assert.equal(score.completion, 100);
-  assert.equal(score.words.correct, WORD_COUNT);
-  assert.equal(score.words.incorrect, 0);
-  assert.equal(score.words.missed, 0);
-  assert.equal(score.words.extra, 0);
-  assert.equal(score.errors, 0);
+test('exact match with punctuation scores punctuation separately', () => {
+  const s = score('Hello, world.', 'Hello, world.');
+  assert.equal(s.accuracy, 100);
+  assert.equal(s.words.total, 2);
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.punctuation.total, 2);
+  assert.equal(s.punctuation.correct, 2);
+  assert.equal(s.items.total, 4);
+  assert.equal(s.items.correct, 4);
 });
 
-test('a clean typed prefix has 100% accuracy but incomplete coverage', () => {
-  const typed = PASSAGE.split(' ').slice(0, 10).join(' ');
-  const score = computeScore(PASSAGE, typed, 30_000);
-
-  assert.equal(score.accuracy, 100);
-  assert.equal(score.words.correct, 10);
-  assert.equal(score.words.missed, WORD_COUNT - 10);
-  assert.ok(score.completion < 100);
+test('missing punctuation keeps words correct and reports punct missed', () => {
+  const s = score('Good evening. The cat sat.', 'Good evening The cat sat');
+  assert.equal(s.words.correct, 5);
+  assert.equal(s.words.incorrect, 0);
+  assert.equal(s.punctuation.correct, 0);
+  assert.equal(s.punctuation.missed, 2);
+  // 5 correct of 7 evaluated items
+  assert.equal(s.accuracy, 71);
+  const split = splitMissedNotReached(s.alignment);
+  assert.equal(split.missed.length, 2);
+  assert.ok(split.missed.every((e) => e.tokenKind === 'punct'));
+  assert.equal(split.notReached.length, 0);
 });
 
-test('untyped passage tail is not reported as a typing error', () => {
-  const typed = PASSAGE.split(' ').slice(0, 10).join(' ');
-  const score = computeScore(PASSAGE, typed, 30_000);
-
-  assert.equal(score.errors, 0);
-  assert.ok(score.alignment.distance > 100);
-  assert.equal(score.accuracy, 100);
+test('missing all punctuation is 50%, not 0%', () => {
+  const s = score('Hello, world. Goodbye.', 'Hello world Goodbye');
+  assert.equal(s.words.correct, 3);
+  assert.equal(s.punctuation.missed, 3);
+  assert.equal(s.accuracy, 50);
 });
 
-test('a missing middle word does not shift later correct words', () => {
-  const score = computeScore('one two three four', 'one three four', 60_000);
-
-  assert.deepEqual(score.words, {
-    total: 4,
-    correct: 3,
-    incorrect: 0,
-    missed: 1,
-    extra: 0,
-  });
-  assert.equal(score.accuracy, 75);
-  assert.deepEqual(score.alignment.wordDiff, [
-    {
-      index: 1,
-      expected: 'two',
-      actual: null,
-      kind: 'missed',
-    },
-  ]);
+test('case mismatch makes the word wrong (case-sensitive)', () => {
+  const s = score('The cat sat', 'the cat sat');
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.words.incorrect, 1);
+  assert.equal(s.accuracy, 66);
 });
 
-test('an inserted middle word does not shift later correct words', () => {
-  const score = computeScore(
-    'one two three',
-    'one extra two three',
-    60_000
+test('partial prefix excludes tail from accuracy, counts it in completion', () => {
+  const s = score('The cat sat on the mat', 'The cat');
+  assert.equal(s.accuracy, 100);
+  assert.equal(s.completion, 31);
+  const split = splitMissedNotReached(s.alignment);
+  assert.equal(split.missed.length, 0);
+  assert.equal(split.notReached.length, 4);
+});
+
+test('skipped word in the middle is missed and hurts accuracy', () => {
+  const s = score('The cat sat', 'The sat');
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.accuracy, 66);
+  const split = splitMissedNotReached(s.alignment);
+  assert.deepEqual(
+    split.missed.map((e) => e.expected),
+    ['cat']
   );
-
-  assert.deepEqual(score.words, {
-    total: 3,
-    correct: 3,
-    incorrect: 0,
-    missed: 0,
-    extra: 1,
-  });
-  assert.equal(score.accuracy, 75);
-  assert.deepEqual(score.alignment.wordDiff, [
-    {
-      index: 1,
-      expected: null,
-      actual: 'extra',
-      kind: 'extra',
-    },
-  ]);
+  assert.equal(split.notReached.length, 0);
 });
 
-test('an untouched trailing word does not reduce attempted-word accuracy', () => {
-  const score = computeScore('one two three four', 'one two', 60_000);
-
-  assert.equal(score.words.correct, 2);
-  assert.equal(score.words.missed, 2);
-  assert.equal(score.accuracy, 100);
-  assert.ok(score.completion < 100);
-});
-
-test('word stats preserve the reference-word total', () => {
-  const score = computeScore(
-    'one two three four',
-    'one wrong three extra',
-    60_000
-  );
-
-  assert.equal(
-    score.words.correct + score.words.incorrect + score.words.missed,
-    score.words.total
+test('typo early then stop does not inflate reach (regression)', () => {
+  // Old bug: char alignment matched typed "a" to "a" in "sat",
+  // promoting "sat" to missed-yellow. Token alignment must not.
+  const s = score('the cat sat on the mat', 'the cta');
+  assert.equal(s.words.correct, 1);
+  assert.equal(s.words.incorrect, 1);
+  const split = splitMissedNotReached(s.alignment);
+  assert.equal(split.missed.length, 0);
+  assert.equal(split.notReached.length, 4);
+  assert.deepEqual(
+    split.notReached.map((e) => e.expected),
+    ['sat', 'on', 'the', 'mat']
   );
 });
 
-test('one wrong character makes its whole word incorrect', () => {
-  const typed = PASSAGE.replace('proceed', 'proceez');
-  const score = computeScore(PASSAGE, typed, 60_000);
-
-  assert.equal(score.alignment.substitutions, 1);
-  assert.equal(score.alignment.deletions, 0);
-  assert.equal(score.alignment.insertions, 0);
-  assert.equal(score.errors, 1);
-  assert.equal(score.words.incorrect, 1);
-  assert.equal(score.words.correct, WORD_COUNT - 1);
-});
-
-test('case differences make the word incorrect', () => {
-  const score = computeScore(
-    'The court is open.',
-    'the court is open.',
-    60_000
-  );
-
-  assert.equal(score.words.correct, 3);
-  assert.equal(score.words.incorrect, 1);
-  assert.equal(score.accuracy, 75);
-});
-
-test('punctuation differences make the word incorrect', () => {
-  const score = computeScore(
-    'The court is open.',
-    'The court is open',
-    60_000
-  );
-
-  assert.equal(score.words.correct, 3);
-  assert.equal(score.words.incorrect, 1);
-  assert.equal(score.accuracy, 75);
-});
-
-test('a character insertion is an edit and makes its word incorrect', () => {
-  const typed = PASSAGE.replace('proceed', 'proceeed');
-  const score = computeScore(PASSAGE, typed, 60_000);
-
-  assert.equal(score.alignment.substitutions, 0);
-  assert.equal(score.alignment.insertions, 1);
-  assert.equal(score.errors, 1);
-  assert.equal(score.words.incorrect, 1);
-});
-
-test('a missing character inside a word is an edit', () => {
-  const typed = PASSAGE.replace('proceed', 'proced');
-  const score = computeScore(PASSAGE, typed, 60_000);
-
-  assert.equal(score.alignment.deletions, 1);
-  assert.equal(score.errors, 1);
-  assert.equal(score.words.incorrect, 1);
-  assert.ok(score.completion < 100);
-});
-
-test('a skipped character does not misalign the rest of the text', () => {
-  const reference = 'the quick brown fox jumps over the lazy dog';
-  const typed = 'the qick brown fox jumps over the lazy dog';
-  const result = align(reference, typed);
-
-  assert.equal(result.distance, 1);
-  assert.equal(result.deletions, 1);
-  assert.equal(result.matches, reference.length - 1);
-
-  const after = result.ops.slice(
-    result.ops.findIndex((op) => op.type === 'delete')
-  );
-  assert.ok(
-    after.every((op) => op.type === 'equal' || op.type === 'delete')
+test('suffix skip counts skipped words as missed', () => {
+  const s = score('the cat sat on the mat', 'sat on the mat');
+  assert.equal(s.words.correct, 4);
+  assert.equal(s.accuracy, 66);
+  const split = splitMissedNotReached(s.alignment);
+  assert.deepEqual(
+    split.missed.map((e) => e.expected),
+    ['the', 'cat']
   );
 });
 
-test('empty input is safe and never produces NaN or Infinity', () => {
-  const score = computeScore(PASSAGE, '', 10_000);
+test('extra word hurts accuracy', () => {
+  const s = score('The cat sat', 'The cat sat now');
+  assert.equal(s.words.correct, 3);
+  assert.equal(s.words.extra, 1);
+  assert.equal(s.accuracy, 75);
+});
 
-  for (const value of [
-    score.accuracy,
-    score.completion,
-    score.wpm,
-    score.rawWpm,
-    score.netWpm,
-  ]) {
-    assert.ok(Number.isFinite(value), `not finite: ${value}`);
+test('extra punctuation hurts accuracy', () => {
+  const s = score('Hello world', 'Hello world!');
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.punctuation.extra, 1);
+  assert.equal(s.accuracy, 66);
+});
+
+test('wrong word is incorrect, not missed+extra', () => {
+  const s = score('The cat sat', 'The dog sat');
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.words.incorrect, 1);
+  assert.equal(s.words.missed, 0);
+  assert.equal(s.words.extra, 0);
+});
+
+test('wrong punctuation is incorrect', () => {
+  const s = score('Hello, world', 'Hello. world');
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.punctuation.incorrect, 1);
+  assert.equal(s.accuracy, 66);
+});
+
+test('trailing punctuation after last word is missed, not not-reached', () => {
+  const s = score('Hello world.', 'Hello world');
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.punctuation.missed, 1);
+  assert.equal(s.accuracy, 66);
+  const split = splitMissedNotReached(s.alignment);
+  assert.equal(split.missed.length, 1);
+  assert.equal(split.notReached.length, 0);
+});
+
+test('empty typed scores 0 and everything is not reached', () => {
+  const s = score('The cat sat', '');
+  assert.equal(s.accuracy, 0);
+  assert.equal(s.completion, 0);
+  assert.equal(s.scored, false);
+  const split = splitMissedNotReached(s.alignment);
+  assert.equal(split.missed.length, 0);
+  assert.equal(split.notReached.length, 3);
+});
+
+test('empty reference and empty typed scores 100 but not scored', () => {
+  const s = score('', '');
+  assert.equal(s.accuracy, 100);
+  assert.equal(s.completion, 100);
+  assert.equal(s.scored, false);
+});
+
+test('short attempts are not scored (timing thresholds)', () => {
+  const s = score('The cat sat on the mat', 'The', 500);
+  assert.equal(s.scored, false);
+  assert.equal(s.rawWpm, 0);
+  assert.equal(s.netWpm, 0);
+});
+
+test('repeated text anchors to the start, not a later occurrence', () => {
+  const s = score('the cat the cat the cat', 'the cat');
+  assert.equal(s.words.correct, 2);
+  const split = splitMissedNotReached(s.alignment);
+  assert.equal(split.missed.length, 0);
+  assert.equal(split.notReached.length, 4);
+});
+
+test("apostrophes and hyphens stay inside words", () => {
+  assert.deepEqual(
+    tokenizeScored("I don't know.").map((t) => t.text),
+    ['I', "don't", 'know', '.']
+  );
+  assert.deepEqual(
+    tokenizeScored('cross-examination').map((t) => t.text),
+    ['cross-examination']
+  );
+  const s = score("I don't know.", "I don't know.");
+  assert.equal(s.accuracy, 100);
+  assert.equal(s.words.total, 3);
+  assert.equal(s.punctuation.total, 1);
+});
+
+test('tokenize splits punctuation runs as single tokens', () => {
+  assert.deepEqual(
+    tokenizeScored('Good evening. The cat sat.').map((t) => [
+      t.text,
+      t.kind,
+    ]),
+    [
+      ['Good', 'word'],
+      ['evening', 'word'],
+      ['.', 'punct'],
+      ['The', 'word'],
+      ['cat', 'word'],
+      ['sat', 'word'],
+      ['.', 'punct'],
+    ]
+  );
+  assert.deepEqual(
+    tokenizeScored('world...').map((t) => t.text),
+    ['world', '...']
+  );
+});
+
+test('countScoredWords ignores punctuation-only chunks', () => {
+  assert.equal(countScoredWords('!!! ??? ...'), 0);
+  assert.equal(countScoredWords('Hello, world!'), 2);
+  assert.equal(countScoredWords(''), 0);
+  assert.equal(countScoredWords("don't stop"), 2);
+});
+
+test('token display reconstructs the typed text exactly', () => {
+  const cases = [
+    ['The cat sat', 'The cat sat'],
+    ['Good evening. The cat sat.', 'Good evening The cat sat'],
+    ['the cat sat on the mat', 'the cta'],
+    ['Hello, world.', 'Hello world'],
+    ["I don't know.", "I don't know."],
+    ['The cat sat', 'The dog sat'],
+    ['The cat sat', 'The cat sat now'],
+  ];
+
+  for (const [ref, typed] of cases) {
+    const alignment = align(ref, typed);
+    const display = buildTokenDisplayItems(alignment)
+      .map((item) => item.ch)
+      .join('');
+    assert.equal(display, alignment.typed, `ref=${ref} typed=${typed}`);
   }
-
-  assert.equal(score.accuracy, 0);
-  assert.equal(score.completion, 0);
-  assert.equal(score.words.correct, 0);
-  assert.equal(score.words.missed, WORD_COUNT);
 });
 
-test('empty reference is safe, including typed extra text', () => {
-  const empty = computeScore('', '', 0);
-
-  assert.equal(empty.accuracy, 100);
-  assert.equal(empty.completion, 100);
-  assert.equal(empty.words.total, 0);
-
-  const typed = computeScore('', 'abc', 5_000);
-
-  assert.ok(Number.isFinite(typed.accuracy));
-  assert.equal(typed.accuracy, 0);
-  assert.equal(typed.completion, 0);
-  assert.equal(typed.errors, 3);
-  assert.equal(typed.words.extra, 1);
+test('token display colors correct tokens green and wrong chars red', () => {
+  const alignment = align('The cat sat', 'The dog sat');
+  const display = buildTokenDisplayItems(alignment);
+  const text = display.map((item) => item.ch).join('');
+  assert.equal(text, 'The dog sat');
+  // "The " green, "dog" red, " sat" green
+  assert.ok(display.slice(0, 4).every((i) => i.state === 'correct'));
+  assert.ok(display.slice(4, 7).every((i) => i.state === 'wrong'));
+  assert.ok(display.slice(7).every((i) => i.state === 'correct'));
 });
 
-test('a corrected typo leaves no final error', () => {
-  const wrong = computeScore(
-    PASSAGE,
-    PASSAGE.replace('proceed', 'proceeed'),
-    60_000
+test('align() rejects inputs over MAX_ALIGN_CHARS', () => {
+  assert.throws(
+    () => align('a'.repeat(MAX_ALIGN_CHARS + 1), ''),
+    RangeError
   );
-  const corrected = computeScore(PASSAGE, PASSAGE, 60_000);
-
-  assert.equal(wrong.errors, 1);
-  assert.equal(corrected.errors, 0);
-  assert.equal(corrected.accuracy, 100);
-});
-
-/* ─── Accuracy and completion ────────────────────────────── */
-
-test('accuracy uses exact attempted words and excludes untouched tail', () => {
-  const score = computeScore(
-    'one two three four five six',
-    'one two three four X',
-    60_000
-  );
-
-  assert.equal(score.accuracy, 80);
-  assert.equal(score.words.correct, 4);
-  assert.equal(score.words.incorrect, 1);
-  assert.equal(score.words.missed, 1);
-});
-
-test('completion ignores inserted characters', () => {
-  const score = computeScore('abcdefghij', 'abcdeXXXXX', 60_000);
-
-  assert.equal(score.alignment.deletions, 0);
-  assert.equal(score.completion, 100);
-  assert.equal(score.accuracy, 0);
-});
-
-test('completion counts substitutions as covered and deletions as missing', () => {
-  const substituted = computeScore('abcdef', 'zzzzzz', 10_000);
-  assert.equal(substituted.alignment.deletions, 0);
-  assert.equal(substituted.completion, 100);
-
-  const empty = computeScore('abcdef', '', 10_000);
-  assert.equal(empty.alignment.deletions, 6);
-  assert.equal(empty.completion, 0);
-});
-
-test('extra words count against attempted-word accuracy', () => {
-  const score = computeScore('one two', 'one two extra', 60_000);
-
-  assert.equal(score.words.correct, 2);
-  assert.equal(score.words.extra, 1);
-  assert.equal(score.accuracy, 66);
-  assert.equal(score.completion, 100);
-});
-
-/* ─── WPM and timing ─────────────────────────────────────── */
-
-test('raw WPM uses typed characters / 5 / elapsed minutes', () => {
-  const text = 'a'.repeat(50);
-  const score = computeScore(text, text, 30_000);
-
-  assert.equal(score.rawWpm, 20);
-  assert.equal(score.netWpm, 20);
-  assert.equal(score.wpm, score.netWpm);
-});
-
-test('net WPM is gross WPM adjusted by attempted-word accuracy', () => {
-  const score = computeScore('one two', 'one wrong', 60_000);
-
-  assert.equal(score.rawWpm, 2);
-  assert.equal(score.accuracy, 50);
-  assert.equal(score.netWpm, 1);
-  assert.equal(score.wpm, score.netWpm);
-});
-
-test('elapsed time is taken from the caller wall clock', () => {
-  const startedAt = 1_000_000;
-  const finishedAt = startedAt + 45_000;
-  const elapsed = finishedAt - startedAt;
-  const score = scoreFromAlignment(align('abcdefghij', 'abcdefghij'), elapsed);
-
-  assert.equal(score.elapsedMs, 45_000);
-  assert.equal(
-    score.rawWpm,
-    Math.round(10 / 5 / (45_000 / 60_000))
+  assert.throws(
+    () => align('', 'a'.repeat(MAX_ALIGN_CHARS + 1)),
+    RangeError
   );
 });
 
-test('very short attempts are not scored', () => {
-  const score = computeScore('abcdefghij', 'abc', 200);
-
-  assert.equal(score.scored, false);
-  assert.equal(score.wpm, 0);
-  assert.equal(score.rawWpm, 0);
-  assert.equal(score.netWpm, 0);
+test('wordDiff alias matches tokenDiff', () => {
+  const alignment = align('Hello, world.', 'Hello world');
+  assert.deepEqual(alignment.wordDiff, alignment.tokenDiff);
 });
 
-test('minimum scored thresholds are one second and five characters', () => {
-  assert.equal(MIN_SCORED_ELAPSED_MS, 1000);
-  assert.equal(MIN_SCORED_TYPED_CHARS, 5);
-
-  assert.equal(computeScore('abcdefghij', 'abcd', 5_000).scored, false);
-  assert.equal(computeScore('abcdefghij', 'abcde', 500).scored, false);
-  assert.equal(computeScore('abcdefghij', 'abcde', 1_000).scored, true);
+test('WPM uses wall-clock elapsed and accuracy adjustment', () => {
+  // 11 chars in 10s => (11/5)/(10/60) = 13.2 raw, 100% => 13 net
+  const s = score('The cat sat', 'The cat sat', 10_000);
+  assert.equal(s.rawWpm, 13);
+  assert.equal(s.netWpm, 13);
+  // 66% accuracy => net = round(13.2 * 0.66) = 9
+  const s2 = score('The cat sat', 'the cat sat', 10_000);
+  assert.equal(s2.rawWpm, 13);
+  assert.equal(s2.netWpm, 9);
 });
 
-test('zero elapsed time never yields Infinity', () => {
-  const score = computeScore('abcdefghij', 'abcdefghij', 0);
-
-  assert.ok(Number.isFinite(score.rawWpm));
-  assert.equal(score.rawWpm, 0);
-  assert.equal(score.scored, false);
+test('display shows exactly the typed text, green/red only', () => {
+  // Regression: "tribnal" for "tribunal" (missing "u") used to render
+  // all-green, looking correct. The display is now exactly what was
+  // typed, and a wrong word is fully red.
+  const alignment = align('The tribunal reserved', 'the tribnal reserved');
+  const display = buildTokenDisplayItems(alignment);
+  const text = display.map((item) => item.ch).join('');
+  assert.equal(text, 'the tribnal reserved');
+  assert.equal(text, alignment.typed);
+  // Only correct/wrong states exist — no missed/extra inline.
+  assert.ok(display.every((i) => i.state === 'correct' || i.state === 'wrong'));
+  // "the" wrong (case), "tribnal" fully red, " reserved" green.
+  assert.ok(display.slice(0, 3).every((i) => i.state === 'wrong'));
+  assert.ok(display.slice(4, 11).every((i) => i.state === 'wrong'));
+  assert.ok(display.slice(11).every((i) => i.state === 'correct'));
+  assert.equal(alignment.words.incorrect, 2); // The/the + tribunal/tribnal
 });
 
-/* ─── Display helpers ────────────────────────────────────── */
-
-test('review display uses the character alignment', () => {
-  const result = align('abc def', 'abX de');
-  const items = buildDisplayItems(result);
-
-  assert.equal(items.length, 7);
-  assert.deepEqual(
-    items.map((item) => item.state),
-    [
-      'correct',
-      'correct',
-      'wrong',
-      'correct',
-      'correct',
-      'correct',
-      'missed',
-    ]
-  );
-  assert.equal(items[2].expected, 'c');
-  assert.equal(items[2].ch, 'X');
-  assert.equal(items[6].ch, 'f');
+test('missing first letter makes the whole word red, text stays typed', () => {
+  const alignment = align('after hearing', 'fter hearing');
+  const display = buildTokenDisplayItems(alignment);
+  assert.equal(display.map((item) => item.ch).join(''), 'fter hearing');
+  assert.ok(display.slice(0, 4).every((i) => i.state === 'wrong'));
+  assert.ok(display.slice(4).every((i) => i.state === 'correct'));
 });
 
-test('live display is positional and puts the next character at the cursor', () => {
-  const { chars, extras } = buildLiveChars(
-    'the quick brown fox',
-    'the qick'
-  );
-
-  assert.equal(extras, '');
-  assert.deepEqual(
-    chars.map((char) => char.state),
-    [
-      'correct',
-      'correct',
-      'correct',
-      'correct',
-      'correct',
-      'wrong',
-      'wrong',
-      'wrong',
-      'current',
-      'untyped',
-      'untyped',
-      'untyped',
-      'untyped',
-      'untyped',
-      'untyped',
-      'untyped',
-      'untyped',
-      'untyped',
-      'untyped',
-    ]
-  );
-
-  const wrong = buildLiveChars('abc', 'aXc').chars;
-  assert.deepEqual(
-    wrong.map((char) => char.state),
-    ['correct', 'wrong', 'correct']
-  );
+test('extra typed word is red, not a separate state', () => {
+  const alignment = align('The cat sat', 'The cat sat now');
+  const display = buildTokenDisplayItems(alignment);
+  assert.equal(display.map((item) => item.ch).join(''), 'The cat sat now');
+  assert.ok(display.slice(0, 12).every((i) => i.state === 'correct'));
+  assert.ok(display.slice(12).every((i) => i.state === 'wrong'));
 });
 
-test('live display starts with the first character as the cursor', () => {
-  const { chars, extras } = buildLiveChars('hello world', '');
-
-  assert.equal(chars[0].state, 'current');
-  assert.ok(chars.slice(1).every((char) => char.state === 'untyped'));
-  assert.equal(extras, '');
-});
-
-test('live display puts overflow characters in extras', () => {
-  const { extras } = buildLiveChars('abc', 'abcdef');
-  assert.equal(extras, 'def');
-});
-
-test('extra characters appear as extra review items', () => {
-  const items = buildDisplayItems(align('abc', 'abcdef'));
-
-  assert.deepEqual(
-    items.map((item) => item.state),
-    ['correct', 'correct', 'correct', 'extra', 'extra', 'extra']
-  );
-});
-
-test('formatClock renders m:ss', () => {
-  assert.equal(formatClock(0), '0:00');
-  assert.equal(formatClock(9), '0:09');
-  assert.equal(formatClock(75), '1:15');
-  assert.equal(formatClock(-5), '0:00');
-});
-
-test('multi-character input is compared as a whole', () => {
-  const result = align('hello world', 'hello w');
-
-  assert.equal(result.typed, 'hello w');
-  assert.equal(result.typedLength, 7);
-  assert.equal(result.distance, 4);
-  assert.equal(result.matches, 7);
-});
-
-test('extra text beyond the reference is penalized, not clamped away', () => {
-  const score = computeScore('abc', 'abcdefgh', 60_000);
-
-  assert.equal(score.alignment.insertions, 5);
-  assert.equal(score.errors, 5);
-  assert.equal(score.completion, 100);
-  assert.equal(score.words.incorrect, 1);
-  assert.ok(score.accuracy < 100);
-});

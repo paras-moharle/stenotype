@@ -1,43 +1,31 @@
-'use client';
-
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { StudentTopbar } from '@/components/student/student-topbar';
 import { StudentShell } from '@/components/student/student-shell';
-import { useAuth } from '@/lib/use-auth';
+import {
+  SESSION_COOKIE,
+  verifySession,
+  getUserByEmail,
+} from '@/lib/auth-server';
 
-export default function StudentLayout({
+/**
+ * Server-side session gate. Runs on every request, so a session
+ * revoked by the admin (or by a second login) is caught immediately
+ * — no stale cached client state. The proxy.ts HMAC/role check is
+ * the first gate; this store check is the authoritative one.
+ */
+export default async function StudentLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading } = useAuth();
-  const router = useRouter();
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value ?? '';
+  const email = token ? verifySession(token) : null;
+  const user = email ? getUserByEmail(email) : null;
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isAuthenticated) {
-      router.replace('/login');
-    }
-  }, [isAuthenticated, isLoading, router]);
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-brand" />
-          <p className="text-sm text-muted-foreground">Checking your session…</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">Redirecting to sign in…</p>
-      </div>
-    );
+  if (!user || user.role !== 'student') {
+    redirect('/login');
   }
 
   return (
@@ -47,3 +35,4 @@ export default function StudentLayout({
     </div>
   );
 }
+

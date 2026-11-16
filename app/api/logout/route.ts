@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import {
-  SESSION_COOKIE,
-  revokeToken,
-  verifyToken,
-} from '@/lib/auth-server';
+import { SESSION_COOKIE, revokeToken } from '@/lib/auth-server';
 
 export const runtime = 'nodejs';
 
@@ -13,12 +9,11 @@ export async function POST() {
   const token = store.get(SESSION_COOKIE)?.value;
 
   if (token) {
-    // Revoke the session from the store regardless of token validity.
+    // Revoke unconditionally — revokeSessionByToken is safe on any
+    // token string (unknown tokens are simply recorded as revoked).
+    // The cookie is cleared below regardless.
     try {
-      const email = verifyToken(token);
-      if (email) {
-        revokeToken(token);
-      }
+      revokeToken(token);
     } catch {
       // Ignore — we still clear the cookie below.
     }
@@ -34,3 +29,4 @@ export async function POST() {
   });
   return res;
 }
+
