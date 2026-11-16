@@ -118,7 +118,7 @@ export default function AboutPage() {
                   key={step.title}
                   className="flex items-center gap-3 rounded-xl border border-border/70 bg-surface/60 p-3"
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/[0.08] text-brand">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-3xl bg-brand/[0.08] text-brand">
                     <step.icon className="h-4 w-4" strokeWidth={1.6} />
                   </span>
 
@@ -225,7 +225,7 @@ export default function AboutPage() {
               href="tel:+917666286532"
               className="group flex min-h-12 items-center gap-2.5 rounded-xl border border-border/80 bg-background/60 px-3 py-2 transition hover:border-brand/30 hover:bg-surface-hover"
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/[0.07] text-brand">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-3xl bg-brand/[0.07] text-brand">
                 <Phone className="h-3.5 w-3.5" strokeWidth={1.6} />
               </span>
               <span className="min-w-0 font-mono text-xs tabular-nums text-foreground group-hover:text-brand">
@@ -237,7 +237,7 @@ export default function AboutPage() {
               href="tel:+919673002886"
               className="group flex min-h-12 items-center gap-2.5 rounded-xl border border-border/80 bg-background/60 px-3 py-2 transition hover:border-brand/30 hover:bg-surface-hover"
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/[0.07] text-brand">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-3xl bg-brand/[0.07] text-brand">
                 <Phone className="h-3.5 w-3.5" strokeWidth={1.6} />
               </span>
               <span className="min-w-0 font-mono text-xs tabular-nums text-foreground group-hover:text-brand">
@@ -263,3 +263,4 @@ export default function AboutPage() {
     </div>
   );
 }
+

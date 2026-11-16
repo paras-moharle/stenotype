@@ -1,315 +1,335 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Plus, X } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Plus, X, Ban, CheckCircle, Trash2, Pencil } from 'lucide-react';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
-import { AdminStatusBadge } from '@/components/admin/admin-status-badge';
 import { AdminSearch } from '@/components/admin/admin-search';
 import { Button } from '@/components/ui/button';
-import {
-  students as initialStudents,
-  batches,
-  type Student,
-} from '@/lib/admin-data';
-import { studentSchema } from '@/lib/schemas';
+
+type Student = {
+  id: string;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    banned: boolean;
+  };
+  phone: string | null;
+  status: string;
+
+  _count: {
+    typingAttempts: number;
+    fees: number;
+  };
+  createdAt: string;
+};
 
 type FormState = {
   name: string;
   email: string;
+  password: string;
   phone: string;
-  batchId: string;
-  status: 'Active' | 'Inactive' | 'Suspended';
-  notes: string;
 };
 
 const blankForm: FormState = {
   name: '',
   email: '',
+  password: '',
   phone: '',
-  batchId: 'b1',
-  status: 'Active',
-  notes: '',
 };
 
 export default function AdminStudentsPage() {
   const [query, setQuery] = useState('');
-  const [batchFilter, setBatchFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [rows, setRows] = useState<Student[]>(initialStudents);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FormState>(blankForm);
-  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  const update = <K extends keyof FormState>(k: K, v: FormState[K]) => {
-    setForm((f) => ({ ...f, [k]: v }));
-    setErrors((e) => ({ ...e, [k]: undefined }));
-  };
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const result = studentSchema.safeParse(form);
-    if (!result.success) {
-      const fe: Partial<Record<keyof FormState, string>> = {};
-      for (const issue of result.error.issues) {
-        fe[issue.path[0] as keyof FormState] = issue.message;
+  const fetchStudents = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/students');
+      if (res.ok) {
+        const data = await res.json();
+        setStudents(data.students);
       }
-      setErrors(fe);
-      return;
+    } catch {
+      setError('Failed to load students');
+    } finally {
+      setLoading(false);
     }
-    setErrors({});
-    const batchName = batches.find((b) => b.id === form.batchId)?.name ?? '—';
-    setRows((prev) => [
-      {
-        id: `s${Date.now()}`,
-        name: form.name,
-        email: form.email,
-        batch: batchName,
-        status: form.status,
-        accuracy: 0,
-        avgWpm: 0,
-        lastPractice: 'Never',
-        fee: 'Pending',
-        joinedAt: new Date().toISOString().slice(0, 10),
-      },
-      ...prev,
-    ]);
-    setForm(blankForm);
-    setShowForm(false);
-    setToast(`${form.name} added (mock — not saved to a database yet).`);
-    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    fetchStudents();
+  }, [fetchStudents]);
+
+  const filtered = students.filter(
+    (s) =>
+      s.user.name.toLowerCase().includes(query.toLowerCase()) ||
+      s.user.email.toLowerCase().includes(query.toLowerCase())
+  );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    try {
+      const res = await fetch('/api/admin/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to create student');
+      }
+
+      setToast('Student created successfully');
+      setShowForm(false);
+      setForm(blankForm);
+      fetchStudents();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create student');
+    }
   };
 
-  const filtered = useMemo(() => {
-    return rows.filter((s) => {
-      const matchQuery =
-        !query ||
-        s.name.toLowerCase().includes(query.toLowerCase()) ||
-        s.email.toLowerCase().includes(query.toLowerCase());
-      const matchBatch = batchFilter === 'All' || s.batch === batchFilter;
-      const matchStatus = statusFilter === 'All' || s.status === statusFilter;
-      return matchQuery && matchBatch && matchStatus;
-    });
-  }, [rows, query, batchFilter, statusFilter]);
+  const handleBan = async (student: Student) => {
+    const newBanned = !student.user.banned;
+    try {
+      const res = await fetch(`/api/admin/users/${student.user.id}/ban`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ banned: newBanned }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update');
+
+      setToast(newBanned ? 'Student blocked' : 'Student unblocked');
+      fetchStudents();
+    } catch {
+      setError('Failed to update student status');
+    }
+  };
+
+  const handleDelete = async (student: Student) => {
+    if (!confirm(`Delete ${student.user.name}? This cannot be undone.`)) return;
+
+    try {
+      const res = await fetch(`/api/admin/students/${student.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) throw new Error('Failed to delete');
+
+      setToast('Student deleted');
+      fetchStudents();
+    } catch {
+      setError('Failed to delete student');
+    }
+  };
+
+  const columns = [
+    {
+      key: 'name',
+      header: 'Name',
+      render: (s: Student) => (
+        <div>
+          <div className="font-medium">{s.user.name}</div>
+          <div className="text-sm text-muted-foreground">{s.user.email}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'phone',
+      header: 'Phone',
+      render: (s: Student) => s.phone ?? '—',
+    },
+    {
+      key: 'attempts',
+      header: 'Attempts',
+      render: (s: Student) => s._count.typingAttempts,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (s: Student) => (
+        <span
+          className={
+            s.user.banned
+              ? 'text-red-500 font-medium'
+              : 'text-green-500 font-medium'
+          }
+        >
+          {s.user.banned ? 'Blocked' : 'Active'}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (s: Student) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleBan(s)}
+            title={s.user.banned ? 'Unblock' : 'Block'}
+          >
+            {s.user.banned ? (
+              <CheckCircle className="h-4 w-4" />
+            ) : (
+              <Ban className="h-4 w-4" />
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleDelete(s)}
+            title="Delete"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <AdminHeader
         title="Students"
-        description="Manage enrolled students, batches, and practice status."
+        description="Manage student accounts"
         action={
-          <Button onClick={() => setShowForm((v) => !v)} className="gap-1.5">
-            {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            {showForm ? 'Cancel' : 'Add Student'}
+          <Button onClick={() => setShowForm(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Student
           </Button>
         }
       />
 
-      {toast && (
-        <div className="rounded-md border border-success/30 bg-success/10 px-4 py-2.5 text-sm text-success">
-          {toast}
+      <AdminSearch
+        value={query}
+        onChange={setQuery}
+        placeholder="Search students..."
+      />
+
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-500">
+          {error}
         </div>
       )}
 
-      {showForm && (
-        <form
-          onSubmit={submit}
-          className="rounded-lg border border-border bg-surface p-6"
-        >
-          <h2 className="mb-5 text-base font-semibold text-foreground">
-            New Student
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Full name" error={errors.name}>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => update('name', e.target.value)}
-                placeholder="e.g. Aarav Sharma"
-                className={inputClass(!!errors.name)}
-              />
-            </FormField>
-            <FormField label="Email" error={errors.email}>
-              <input
-                type="email"
-                value={form.email}
-                onChange={(e) => update('email', e.target.value)}
-                placeholder="aarav@example.com"
-                className={inputClass(!!errors.email)}
-              />
-            </FormField>
-            <FormField label="Phone (optional)" error={errors.phone}>
-              <input
-                type="tel"
-                value={form.phone}
-                onChange={(e) => update('phone', e.target.value)}
-                placeholder="+91 9876543210"
-                className={inputClass(!!errors.phone)}
-              />
-            </FormField>
-            <FormField label="Batch" error={errors.batchId}>
-              <select
-                value={form.batchId}
-                onChange={(e) => update('batchId', e.target.value)}
-                className={inputClass(!!errors.batchId)}
-              >
-                {batches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Status">
-              <select
-                value={form.status}
-                onChange={(e) =>
-                  update('status', e.target.value as FormState['status'])
-                }
-                className={inputClass(false)}
-              >
-                <option>Active</option>
-                <option>Inactive</option>
-                <option>Suspended</option>
-              </select>
-            </FormField>
-            <FormField label="Notes (optional)">
-              <input
-                type="text"
-                value={form.notes}
-                onChange={(e) => update('notes', e.target.value)}
-                placeholder="Any relevant notes..."
-                className={inputClass(false)}
-              />
-            </FormField>
-          </div>
-          <div className="mt-6 flex justify-end gap-2 border-t border-border pt-5">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setForm(blankForm);
-                setErrors({});
-                setShowForm(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button type="submit">Add Student</Button>
-          </div>
-        </form>
+      {toast && (
+        <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-green-500">
+          {toast}
+          <button
+            onClick={() => setToast(null)}
+            className="ml-2 text-green-500 hover:text-green-400"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <AdminSearch
-          value={query}
-          onChange={setQuery}
-          placeholder="Search by name or email..."
-          className="sm:max-w-xs"
+      {loading ? (
+        <div className="text-center py-8 text-muted-foreground">
+          Loading students...
+        </div>
+      ) : (
+        <AdminTable
+          columns={columns}
+          rows={filtered}
+          rowKey={(s) => s.id}
         />
-        <select
-          value={batchFilter}
-          onChange={(e) => setBatchFilter(e.target.value)}
-          className="h-10 rounded-md border border-border bg-surface px-3 text-sm text-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
-        >
-          <option value="All">All batches</option>
-          {batches.map((b) => (
-            <option key={b.id} value={b.name}>
-              {b.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-10 rounded-md border border-border bg-surface px-3 text-sm text-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
-        >
-          <option value="All">All statuses</option>
-          <option value="Active">Active</option>
-          <option value="Inactive">Inactive</option>
-          <option value="Suspended">Suspended</option>
-        </select>
-      </div>
+      )}
 
-      <AdminTable<Student>
-        rows={filtered}
-        rowKey={(s) => s.id}
-        columns={[
-          {
-            key: 'name',
-            header: 'Student',
-            render: (s) => (
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-lg bg-background p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Add Student</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowForm(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <p className="font-medium text-foreground">{s.name}</p>
-                <p className="text-xs text-muted-foreground">{s.email}</p>
+                <label htmlFor="student-name" className="mb-1 block text-sm font-medium">Name</label>
+                <input
+                  id="student-name"
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  required
+                />
               </div>
-            ),
-          },
-          {
-            key: 'batch',
-            header: 'Batch',
-            render: (s) => <span className="text-muted-foreground">{s.batch}</span>,
-          },
-          {
-            key: 'status',
-            header: 'Status',
-            render: (s) => <AdminStatusBadge status={s.status} />,
-          },
-          {
-            key: 'accuracy',
-            header: 'Accuracy',
-            render: (s) => (
-              <span className="font-mono tabular-nums text-foreground">
-                {s.accuracy}%
-              </span>
-            ),
-          },
-          {
-            key: 'lastPractice',
-            header: 'Last Practice',
-            render: (s) => (
-              <span className="text-muted-foreground">{s.lastPractice}</span>
-            ),
-          },
-          {
-            key: 'fee',
-            header: 'Fee',
-            render: (s) => <AdminStatusBadge status={s.fee} />,
-          },
-        ]}
-      />
 
-      <p className="text-xs text-muted-foreground">
-        Showing {filtered.length} of {rows.length} students.
-      </p>
+              <div>
+                <label htmlFor="student-email" className="mb-1 block text-sm font-medium">Email</label>
+                <input
+                  id="student-email"
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="student-password" className="mb-1 block text-sm font-medium">Password</label>
+                <input
+                  id="student-password"
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  required
+                  minLength={8}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Minimum 8 characters
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="student-phone" className="mb-1 block text-sm font-medium">Phone (optional)</label>
+                <input
+                  id="student-phone"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button type="submit" className="flex-1">
+                  Create Student
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowForm(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-const inputClass = (hasError: boolean) =>
-  `h-10 w-full rounded-md border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 ${
-    hasError
-      ? 'border-destructive/50 focus:border-destructive/50 focus:ring-destructive/20'
-      : 'border-border focus:border-brand/40 focus:ring-brand/20'
-  }`;
-
-function FormField({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </label>
-      {children}
-      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
-    </div>
-  );
-}

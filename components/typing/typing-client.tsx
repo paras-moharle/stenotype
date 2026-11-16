@@ -40,16 +40,7 @@ import {
   type TokenDiffEntry,
 } from '@/lib/typing/scoring';
 import { generatePassage, recommendDuration } from '@/lib/passage-generator';
-import { mockDictations } from '@/lib/dictation-transcripts';
 import { sanitizeForTyping } from '@/lib/sanitize';
-import {
-  addSessionResult,
-  getSessionResults,
-  subscribeSessionResults,
-  clearSessionResults,
-  type SessionResult,
-} from '@/lib/session-results';
-
 type TestState = 'idle' | 'running' | 'complete';
 type Duration = 15 | 30 | 60;
 type Category = 'mixed' | 'Legal' | 'Professional' | 'General';
@@ -85,13 +76,42 @@ export default function TypingClient({
   const [duration, setDuration] = useState<Duration>(30);
   const [category, setCategory] = useState<Category>('mixed');
 
-  const [dictationId, setDictationId] = useState(
-    initialDictationId &&
-      mockDictations.some((dictation) => dictation.id === initialDictationId)
-      ? initialDictationId
-      : mockDictations[0].id
-  );
-  const dictation = mockDictations.find((item) => item.id === dictationId)!;
+  // Dictations fetched from API (metadata only, no transcripts).
+  // Transcripts are fetched server-side during scoring.
+  type DictationMeta = {
+    id: string;
+    title: string;
+    category: string;
+    youtubeId: string | null;
+    durationSeconds: number | null;
+  };
+  const [dictations, setDictations] = useState<DictationMeta[]>([]);
+  const [dictationId, setDictationId] = useState(initialDictationId ?? '');
+  const [dictationTranscript, setDictationTranscript] = useState('');
+
+  // Fetch dictations from API on mount.
+  useEffect(() => {
+    fetch('/api/dictations')
+      .then((res) => (res.ok ? res.json() : { dictations: [] }))
+      .then((data) => {
+        setDictations(data.dictations);
+        // Set default dictation if none selected.
+        if (!dictationId && data.dictations.length > 0) {
+          setDictationId(data.dictations[0].id);
+        }
+      })
+      .catch(() => {
+        // API unavailable — dictation mode will be empty.
+      });
+  }, []);
+
+  const dictation = dictations.find((item) => item.id === dictationId) ?? {
+    id: '',
+    title: 'No dictation selected',
+    category: 'GENERAL',
+    youtubeId: null,
+    durationSeconds: null,
+  };
 
   const [customText, setCustomText] = useState('');
   const [showCustomDialog, setShowCustomDialog] = useState(false);
@@ -150,7 +170,7 @@ export default function TypingClient({
   const reference = useMemo(() => {
     if (mode === 'dictation') {
       if (isPublic && !authenticated) return '';
-      return dictation.referenceTranscript;
+      return dictationTranscript; // Populated after scoring for review.
     }
 
     if (mode === 'custom') {
@@ -582,7 +602,7 @@ export default function TypingClient({
 
     const resultCategory =
       mode === 'dictation'
-        ? dictation.category
+        ? (dictation.category as 'Legal' | 'Professional' | 'General')
         : mode === 'custom'
           ? 'Custom'
           : category === 'mixed'
@@ -601,7 +621,10 @@ export default function TypingClient({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             typed,
-            customText: reference,
+            // For dictation mode, send the ID (server fetches transcript).
+            // For other modes, send the reference text directly.
+            passageId: mode === 'dictation' ? dictationId : undefined,
+            customText: mode !== 'dictation' ? reference : undefined,
             elapsedMs,
             clientWpm: score.netWpm,
             clientAccuracy: score.accuracy,
@@ -611,37 +634,11 @@ export default function TypingClient({
         });
         if (res.ok) {
           const data = await res.json();
+          // Set transcript for review display (sent by server after scoring).
+          if (data.reference) {
+            setDictationTranscript(data.reference);
+          }
           // Use the server score for the local record.
-          addSessionResult({
-            id: data.attemptId ?? crypto.randomUUID(),
-            practice:
-              mode === 'dictation'
-                ? dictation.title
-                : mode === 'custom'
-                  ? 'Custom passage'
-                  : 'Free typing',
-            category: resultCategory,
-            wpm: data.score.netWpm,
-            netWpm: data.score.netWpm,
-            rawWpm: data.score.rawWpm,
-            accuracy: data.score.accuracy,
-            completion: data.score.completion,
-            correctWords: data.score.words.correct,
-            incorrectWords: data.score.words.incorrect,
-            missedWords: data.score.words.missed,
-            extraWords: data.score.words.extra,
-            totalWords: data.score.words.total,
-            correctPunct: data.score.punctuation.correct,
-            incorrectPunct: data.score.punctuation.incorrect,
-            missedPunct: data.score.punctuation.missed,
-            extraPunct: data.score.punctuation.extra,
-            totalPunct: data.score.punctuation.total,
-            scored: data.score.scored,
-            duration: formatClock(elapsedMs / 1000),
-            date: new Date().toISOString().slice(0, 10),
-            mode,
-            counted: runBlind && data.score.scored,
-          });
           return;
         }
       } catch {
@@ -649,36 +646,6 @@ export default function TypingClient({
       }
 
       // Fallback: local score (guest mode or offline).
-      addSessionResult({
-        id: crypto.randomUUID(),
-        practice:
-          mode === 'dictation'
-            ? dictation.title
-            : mode === 'custom'
-              ? 'Custom passage'
-              : 'Free typing',
-        category: resultCategory,
-        wpm: score.netWpm,
-        netWpm: score.netWpm,
-        rawWpm: score.rawWpm,
-        accuracy: score.accuracy,
-        completion: score.completion,
-        correctWords: score.words.correct,
-        incorrectWords: score.words.incorrect,
-        missedWords: score.words.missed,
-        extraWords: score.words.extra,
-        totalWords: score.words.total,
-        correctPunct: score.punctuation.correct,
-        incorrectPunct: score.punctuation.incorrect,
-        missedPunct: score.punctuation.missed,
-        extraPunct: score.punctuation.extra,
-        totalPunct: score.punctuation.total,
-        scored: score.scored,
-        duration: formatClock(elapsedMs / 1000),
-        date: new Date().toISOString().slice(0, 10),
-        mode,
-        counted: runBlind && score.scored,
-      });
     };
 
     submitToServer();
@@ -711,28 +678,6 @@ export default function TypingClient({
 
   return (
     <div className="space-y-3 sm:space-y-4">
-      {!isPublic && (
-        <aside className="flex items-start gap-3 rounded-xl border border-warning/20 bg-warning/[0.045] px-3 py-2.5 sm:items-center sm:px-4">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning sm:mt-0">
-            <Info className="h-4 w-4" strokeWidth={1.7} />
-          </span>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-xs font-semibold text-foreground">
-                Session-only scores
-              </p>
-              <span className="rounded-full border border-warning/20 bg-warning/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-warning">
-                Temporary
-              </span>
-            </div>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-              Finish up to 5 tests and review their scores during this visit.
-              Refreshing clears them; database storage is not connected yet.
-            </p>
-          </div>
-        </aside>
-      )}
-
       {isPublic && (
         <section
           className="space-y-2.5 sm:space-y-3"
@@ -752,7 +697,6 @@ export default function TypingClient({
                 </h1>
               </div>
             </div>
-            <RecentRuns />
           </div>
 
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -1082,10 +1026,10 @@ export default function TypingClient({
                 onChange={(event) => setDictationId(event.target.value)}
                 className={selectClass}
               >
-                {mockDictations.map((item) => (
+                {dictations.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.title} —{' '}
-                    {countScoredWords(item.referenceTranscript)}{' '}
+                    
                     words
                   </option>
                 ))}
@@ -1837,12 +1781,12 @@ function CustomTextDialog({
       aria-modal="true"
     >
       <div
-        className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-border bg-surface p-4 shadow-xl sm:p-6"
+        className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-[2rem] border border-border bg-surface p-6 shadow-2xl animate-scale-in sm:p-8"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="mb-4 flex items-start justify-between">
+        <div className="mb-6 flex items-start justify-between">
           <div>
-            <h3 className="text-base font-semibold text-foreground">
+            <h3 className="text-xl font-bold text-foreground">
               Paste your own text
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -1853,7 +1797,7 @@ function CustomTextDialog({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-accent hover:text-foreground hover:scale-105"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -1867,7 +1811,7 @@ function CustomTextDialog({
           <button
             type="button"
             onClick={pasteFromClipboard}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-xs font-medium text-muted-foreground transition-all hover:text-foreground hover:border-brand/30 hover:scale-[1.02]"
           >
             <ClipboardPaste className="h-3 w-3" />
             Paste from clipboard
@@ -1880,7 +1824,7 @@ function CustomTextDialog({
           onChange={(event) => setCustomInput(event.target.value)}
           placeholder="Paste or type English text (at least 10 words)…"
           rows={8}
-          className="max-h-64 w-full resize-y overflow-auto rounded-xl border border-border bg-background p-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
+          className="max-h-64 w-full resize-y overflow-auto rounded-3xl border border-border bg-background p-5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20 transition-all"
         />
 
         <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
@@ -1911,11 +1855,11 @@ function CustomTextDialog({
           Hide reference (blind runs count when they meet the score minimum)
         </label>
 
-        <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
-          <Button variant="outline" onClick={onClose} className="rounded-xl">
+        <div className="mt-6 flex justify-end gap-3 border-t border-border pt-5">
+          <Button variant="outline" onClick={onClose} className="rounded-full px-6">
             Cancel
           </Button>
-          <Button onClick={onApply} disabled={!canStart} className="rounded-xl">
+          <Button onClick={onApply} disabled={!canStart} className="rounded-full px-6">
             Start
           </Button>
         </div>
@@ -1965,7 +1909,7 @@ function BlindConfirmDialog({
             )}
             <h3
               id="blind-confirm-title"
-              className="text-base font-semibold text-foreground"
+              className="text-xl font-bold text-foreground"
             >
               {enabling ? 'Enable blind mode?' : 'Turn off blind mode?'}
             </h3>
@@ -1973,7 +1917,7 @@ function BlindConfirmDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-accent hover:text-foreground hover:scale-105"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -1989,7 +1933,7 @@ function BlindConfirmDialog({
           Your current attempt will be restarted.
         </p>
 
-        <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
+        <div className="mt-6 flex justify-end gap-3 border-t border-border pt-5">
           <Button
             variant="outline"
             onClick={onCancel}
@@ -2200,12 +2144,10 @@ function CompletionPanel({
 
       {isPublic ? (
         <p className="text-[11px] text-muted-foreground">
-          Results are session-only — cleared when you refresh.
         </p>
       ) : (
         <div className="rounded-xl border border-warning/20 bg-warning/[0.045] p-3">
           <p className="text-xs font-semibold text-warning">
-            Results are session-only
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             This score is shown for this visit only. Refreshing the page clears
@@ -2517,93 +2459,4 @@ function DiffTable({ entries }: { entries: TokenDiffEntry[] }) {
   );
 }
 
-function RecentRuns() {
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<SessionResult[]>([]);
-
-  useEffect(() => {
-    setResults(getSessionResults());
-    return subscribeSessionResults(() => setResults(getSessionResults()));
-  }, []);
-
-  return (
-    <div className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-controls="recent-runs-panel"
-        className={cn(
-          'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-2',
-          open
-            ? 'bg-brand/10 text-brand'
-            : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
-        )}
-      >
-        <History className="h-3.5 w-3.5" strokeWidth={1.6} />
-        <span>Recent runs</span>
-        <span className="font-mono tabular-nums">{results.length}</span>
-      </button>
-
-      {open && (
-        <div
-          id="recent-runs-panel"
-          className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-surface p-3 shadow-lg"
-        >
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              This visit only
-            </span>
-            {results.length > 0 && (
-              <button
-                type="button"
-                onClick={clearSessionResults}
-                className="rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-
-          {results.length === 0 ? (
-            <p className="rounded-lg bg-background p-3 text-xs leading-relaxed text-muted-foreground">
-              No runs yet — finish a test and it appears here. Refreshing clears
-              the list.
-            </p>
-          ) : (
-            <ul className="max-h-72 space-y-2 overflow-y-auto">
-              {results.map((result) => (
-                <li
-                  key={result.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-background px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-foreground">
-                      {result.practice}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      {result.duration} · {result.accuracy}% accuracy
-                    </p>
-                    <p className="mt-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
-                      {result.correctWords}✓ {result.incorrectWords}✗{' '}
-                      {result.missedWords}– {result.extraWords}+
-                    </p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="font-mono text-sm font-semibold tabular-nums text-foreground">
-                      {result.netWpm}
-                    </p>
-                    <p className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                      net WPM
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 

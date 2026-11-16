@@ -1,11 +1,34 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { StudentSidebar } from './student-sidebar';
 import { StudentMobileNav } from './student-mobile-nav';
+import { useAuth } from '@/lib/use-auth';
 
 export function StudentShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+
+  // Redirect to login if session expired
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isLoading, isAuthenticated, router]);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
+        <div className="text-muted-foreground">Checking session...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
 
   return (
     <div className="flex min-h-[calc(100vh-4rem)]">
@@ -19,3 +42,4 @@ export function StudentShell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+

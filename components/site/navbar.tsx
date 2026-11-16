@@ -7,6 +7,7 @@ import { Menu, X, LogOut, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/use-auth';
+import { Logo } from '@/components/site/logo';
 
 const navLinks = [
   { href: '/', label: 'Practice' },
@@ -23,20 +24,8 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/90 backdrop-blur-md">
-      <nav className="container-page relative flex h-14 items-center justify-between sm:h-16">
-        <Link
-          href="/"
-          className="flex items-center gap-2.5 text-[15px] font-semibold tracking-tight text-foreground"
-          onClick={() => setMobileOpen(false)}
-        >
-          <span
-            className="flex h-8 w-8 items-center justify-center rounded-xl bg-brand text-[12px] font-bold leading-none text-brand-foreground shadow-sm"
-            aria-hidden="true"
-          >
-            S
-          </span>
-          StenoType
-        </Link>
+      <nav className="container-page relative flex h-16 items-center justify-between sm:h-20">
+        <Logo onClick={() => setMobileOpen(false)} />
 
         <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-border/70 bg-surface/70 p-1 shadow-sm md:flex">
           {navLinks.map((link) => (
@@ -189,3 +178,4 @@ export function Navbar() {
     </header>
   );
 }
+

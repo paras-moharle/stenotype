@@ -1,362 +1,377 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { Plus, Upload, X, FileAudio } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Plus, X, Trash2, Pencil, Eye } from 'lucide-react';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
-import { AdminStatusBadge } from '@/components/admin/admin-status-badge';
-import { AdminEmptyState } from '@/components/admin/admin-empty-state';
+import { AdminSearch } from '@/components/admin/admin-search';
 import { Button } from '@/components/ui/button';
-import { dictations, type Dictation } from '@/lib/admin-data';
-import { dictationSchema } from '@/lib/schemas';
 
-const CATEGORIES = ['General', 'Professional', 'Legal'] as const;
-const ASSIGNMENTS = ['All', 'Batch A', 'Batch B', 'Batch C', 'Batch D', 'Individual'] as const;
-const STATUSES = ['Draft', 'Published', 'Archived'] as const;
+type Dictation = {
+  id: string;
+  title: string;
+  category: string;
+  status: string;
+  referenceTranscript: string;
+  youtubeId: string | null;
+  durationSeconds: number | null;
+  createdAt: string;
+};
 
 type FormState = {
   title: string;
-  category: (typeof CATEGORIES)[number];
-  status: (typeof STATUSES)[number];
-  assignedTo: (typeof ASSIGNMENTS)[number];
-  availableFrom: string;
-  availableUntil: string;
+  category: string;
   referenceTranscript: string;
+  youtubeId: string;
+  status: string;
 };
 
 const blankForm: FormState = {
   title: '',
-  category: 'General',
-  status: 'Draft',
-  assignedTo: 'All',
-  availableFrom: '',
-  availableUntil: '',
+  category: 'GENERAL',
   referenceTranscript: '',
+  youtubeId: '',
+  status: 'DRAFT',
 };
 
 export default function AdminDictationsPage() {
+  const [query, setQuery] = useState('');
+  const [dictations, setDictations] = useState<Dictation[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [audioFile, setAudioFile] = useState<{ name: string; size: string } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(blankForm);
-  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
-  const [rows, setRows] = useState<Dictation[]>(dictations);
+  const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
-    setForm((f) => ({ ...f, [key]: value }));
-    setErrors((e) => ({ ...e, [key]: undefined }));
-  };
-
-  const handleFileSelect = (file: File) => {
-    const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-    setAudioFile({ name: file.name, size: `${sizeMB} MB` });
-  };
-
-  const submit = (status: 'Draft' | 'Published') => {
-    const result = dictationSchema.safeParse({ ...form, status });
-    if (!result.success) {
-      const fieldErrors: Partial<Record<keyof FormState, string>> = {};
-      for (const issue of result.error.issues) {
-        const k = issue.path[0] as keyof FormState;
-        fieldErrors[k] = issue.message;
+  const fetchDictations = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/dictations');
+      if (res.ok) {
+        const data = await res.json();
+        setDictations(data.dictations);
       }
-      setErrors(fieldErrors);
-      return;
+    } catch {
+      setError('Failed to load dictations');
+    } finally {
+      setLoading(false);
     }
-    setErrors({});
-    setRows((prev) => [
-      {
-        id: `d${Date.now()}`,
-        title: form.title,
-        category: form.category,
-        duration: '—',
-        status,
-        assignedTo: form.assignedTo,
-        availableFrom: form.availableFrom || '—',
-        availableUntil: form.availableUntil || '—',
-      },
-      ...prev,
-    ]);
-    setForm(blankForm);
-    setAudioFile(null);
-    setShowForm(false);
-    setToast(
-      status === 'Published'
-        ? 'Dictation published (mock — not saved to a database yet).'
-        : 'Draft saved (mock).'
-    );
-    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    fetchDictations();
+  }, [fetchDictations]);
+
+  const filtered = dictations.filter(
+    (d) =>
+      d.title.toLowerCase().includes(query.toLowerCase()) ||
+      d.category.toLowerCase().includes(query.toLowerCase())
+  );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    try {
+      const url = editingId
+        ? `/api/admin/dictations/${editingId}`
+        : '/api/admin/dictations';
+      const method = editingId ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          youtubeId: form.youtubeId || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to save dictation');
+      }
+
+      setToast(editingId ? 'Dictation updated' : 'Dictation created');
+      setShowForm(false);
+      setEditingId(null);
+      setForm(blankForm);
+      fetchDictations();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save dictation');
+    }
   };
+
+  const handleEdit = (dictation: Dictation) => {
+    setEditingId(dictation.id);
+    setForm({
+      title: dictation.title,
+      category: dictation.category,
+      referenceTranscript: dictation.referenceTranscript,
+      youtubeId: dictation.youtubeId ?? '',
+      status: dictation.status,
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (dictation: Dictation) => {
+    if (!confirm(`Delete "${dictation.title}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/admin/dictations/${dictation.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) throw new Error('Failed to delete');
+
+      setToast('Dictation deleted');
+      fetchDictations();
+    } catch {
+      setError('Failed to delete dictation');
+    }
+  };
+
+  const columns = [
+    {
+      key: 'title',
+      header: 'Title',
+      render: (d: Dictation) => (
+        <div className="font-medium">{d.title}</div>
+      ),
+    },
+    {
+      key: 'category',
+      header: 'Category',
+      render: (d: Dictation) => d.category,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (d: Dictation) => (
+        <span
+          className={
+            d.status === 'PUBLISHED'
+              ? 'text-green-500 font-medium'
+              : 'text-yellow-500 font-medium'
+          }
+        >
+          {d.status}
+        </span>
+      ),
+    },
+    {
+      key: 'youtube',
+      header: 'YouTube',
+      render: (d: Dictation) =>
+        d.youtubeId ? (
+          <a
+            href={`https://youtube.com/watch?v=${d.youtubeId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:underline"
+          >
+            Watch
+          </a>
+        ) : (
+          '—'
+        ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (d: Dictation) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleEdit(d)}
+            title="Edit"
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleDelete(d)}
+            title="Delete"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <AdminHeader
         title="Dictations"
-        description="Manage dictation audio and reference transcripts."
+        description="Upload and manage dictation exercises"
         action={
-          <Button onClick={() => setShowForm((v) => !v)} className="gap-1.5">
-            {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            {showForm ? 'Cancel' : 'New Dictation'}
+          <Button
+            onClick={() => {
+              setEditingId(null);
+              setForm(blankForm);
+              setShowForm(true);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Upload Dictation
           </Button>
         }
       />
 
-      {toast && (
-        <div className="rounded-md border border-success/30 bg-success/10 px-4 py-2.5 text-sm text-success">
-          {toast}
+      <AdminSearch
+        value={query}
+        onChange={setQuery}
+        placeholder="Search dictations..."
+      />
+
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-500">
+          {error}
         </div>
+      )}
+
+      {toast && (
+        <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-green-500">
+          {toast}
+          <button
+            onClick={() => setToast(null)}
+            className="ml-2 text-green-500 hover:text-green-400"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8 text-muted-foreground">
+          Loading dictations...
+        </div>
+      ) : (
+        <AdminTable
+          columns={columns}
+          rows={filtered}
+          rowKey={(d) => d.id}
+        />
       )}
 
       {showForm && (
-        <div className="rounded-lg border border-border bg-surface p-6">
-          <h2 className="mb-6 text-base font-semibold text-foreground">
-            New Dictation
-          </h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-2xl rounded-lg bg-background p-6 max-h-[90vh] overflow-y-auto">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">
+                {editingId ? 'Edit Dictation' : 'Upload Dictation'}
+              </h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setShowForm(false);
+                  setEditingId(null);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-5">
-              <Field label="Title" error={errors.title}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="dict-title" className="mb-1 block text-sm font-medium">Title</label>
                 <input
+                  id="dict-title"
                   type="text"
                   value={form.title}
-                  onChange={(e) => update('title', e.target.value)}
-                  placeholder="e.g. Court Proceedings — Verdict"
-                  className={inputClass(!!errors.title)}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  required
                 />
-              </Field>
-
-              <Field label="Category" error={errors.category}>
-                <select
-                  value={form.category}
-                  onChange={(e) =>
-                    update('category', e.target.value as FormState['category'])
-                  }
-                  className={inputClass(!!errors.category)}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Assignment" error={errors.assignedTo}>
-                <select
-                  value={form.assignedTo}
-                  onChange={(e) =>
-                    update(
-                      'assignedTo',
-                      e.target.value as FormState['assignedTo']
-                    )
-                  }
-                  className={inputClass(!!errors.assignedTo)}
-                >
-                  {ASSIGNMENTS.map((a) => (
-                    <option key={a}>{a}</option>
-                  ))}
-                </select>
-              </Field>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Available From" error={errors.availableFrom}>
-                  <input
-                    type="date"
-                    value={form.availableFrom}
-                    onChange={(e) => update('availableFrom', e.target.value)}
-                    className={inputClass(!!errors.availableFrom)}
-                  />
-                </Field>
-                <Field label="Available Until" error={errors.availableUntil}>
-                  <input
-                    type="date"
-                    value={form.availableUntil}
-                    onChange={(e) => update('availableUntil', e.target.value)}
-                    className={inputClass(!!errors.availableUntil)}
-                  />
-                </Field>
               </div>
 
-              <Field label="Status">
-                <select
-                  value={form.status}
-                  onChange={(e) =>
-                    update('status', e.target.value as FormState['status'])
-                  }
-                  className={inputClass(false)}
-                >
-                  {STATUSES.map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-
-            <div className="space-y-5">
-              <Field label="Audio">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleFileSelect(f);
-                  }}
-                />
-                {audioFile ? (
-                  <div className="flex items-center justify-between rounded-md border border-border bg-background p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-brand">
-                        <FileAudio className="h-4 w-4" strokeWidth={1.5} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">
-                          {audioFile.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {audioFile.size} · Ready to upload to R2
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setAudioFile(null)}
-                      className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      aria-label="Remove audio"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex w-full flex-col items-center justify-center rounded-md border border-dashed border-border bg-background px-6 py-8 text-center transition-colors hover:border-brand/40 hover:bg-accent/30"
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="dict-category" className="mb-1 block text-sm font-medium">Category</label>
+                  <select
+                    id="dict-category"
+                    value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2"
                   >
-                    <Upload
-                      className="mb-2 h-5 w-5 text-muted-foreground"
-                      strokeWidth={1.5}
-                    />
-                    <p className="text-sm font-medium text-foreground">
-                      Choose audio file
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      MP3, WAV, or M4A — uploads when backend is connected
-                    </p>
-                  </button>
-                )}
-              </Field>
+                    <option value="LEGAL">Legal</option>
+                    <option value="PROFESSIONAL">Professional</option>
+                    <option value="GENERAL">General</option>
+                  </select>
+                </div>
 
-              <Field label="Reference Transcript" error={errors.referenceTranscript}>
-                <textarea
-                  rows={8}
-                  value={form.referenceTranscript}
-                  onChange={(e) => update('referenceTranscript', e.target.value)}
-                  placeholder="Type the reference transcript here..."
-                  className={`${inputClass(!!errors.referenceTranscript)} font-mono`}
+                <div>
+                  <label htmlFor="dict-status" className="mb-1 block text-sm font-medium">Status</label>
+                  <select
+                    id="dict-status"
+                    value={form.status}
+                    onChange={(e) => setForm({ ...form, status: e.target.value })}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  >
+                    <option value="DRAFT">Draft</option>
+                    <option value="PUBLISHED">Published</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="dict-youtube" className="mb-1 block text-sm font-medium">
+                  YouTube Video ID (optional)
+                </label>
+                <input
+                  id="dict-youtube"
+                  type="text"
+                  value={form.youtubeId}
+                  onChange={(e) => setForm({ ...form, youtubeId: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  placeholder="e.g. dQw4w9WgXcQ"
                 />
-              </Field>
-            </div>
-          </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Just the video ID from the YouTube URL
+                </p>
+              </div>
 
-          <div className="mt-6 flex justify-end gap-2 border-t border-border pt-5">
-            <Button variant="outline" onClick={() => submit('Draft')}>
-              Save Draft
-            </Button>
-            <Button onClick={() => submit('Published')}>Publish</Button>
+              <div>
+                <label htmlFor="dict-transcript" className="mb-1 block text-sm font-medium">Transcript</label>
+                <textarea
+                  id="dict-transcript"
+                  value={form.referenceTranscript}
+                  onChange={(e) =>
+                    setForm({ ...form, referenceTranscript: e.target.value })
+                  }
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 min-h-40"
+                  required
+                  rows={8}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  The text students will type against. This is never shown to students before they complete the dictation.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button type="submit" className="flex-1">
+                  {editingId ? 'Update Dictation' : 'Create Dictation'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditingId(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}
-
-      {rows.length === 0 ? (
-        <AdminEmptyState
-          title="No dictations yet"
-          description="Create your first dictation to get started."
-          action={
-            <Button onClick={() => setShowForm(true)} className="gap-1.5">
-              <Plus className="h-4 w-4" />
-              New Dictation
-            </Button>
-          }
-        />
-      ) : (
-        <AdminTable<Dictation>
-          rows={rows}
-          rowKey={(d) => d.id}
-          columns={[
-            {
-              key: 'title',
-              header: 'Title',
-              render: (d) => (
-                <div>
-                  <p className="font-medium text-foreground">{d.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {d.availableFrom === '—'
-                      ? 'Unscheduled'
-                      : `${d.availableFrom} → ${d.availableUntil}`}
-                  </p>
-                </div>
-              ),
-            },
-            {
-              key: 'category',
-              header: 'Category',
-              render: (d) => (
-                <span className="text-muted-foreground">{d.category}</span>
-              ),
-            },
-            {
-              key: 'duration',
-              header: 'Duration',
-              render: (d) => (
-                <span className="font-mono text-foreground">{d.duration}</span>
-              ),
-            },
-            {
-              key: 'status',
-              header: 'Status',
-              render: (d) => <AdminStatusBadge status={d.status} />,
-            },
-            {
-              key: 'assignedTo',
-              header: 'Assigned To',
-              render: (d) => (
-                <span className="text-muted-foreground">{d.assignedTo}</span>
-              ),
-            },
-          ]}
-        />
-      )}
     </div>
   );
 }
 
-/* ─── Small shared form primitives ─────────────────────── */
-
-const inputClass = (hasError: boolean) =>
-  `h-10 w-full rounded-md border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 ${
-    hasError
-      ? 'border-destructive/50 focus:border-destructive/50 focus:ring-destructive/20'
-      : 'border-border focus:border-brand/40 focus:ring-brand/20'
-  }`;
-
-function Field({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </label>
-      {children}
-      {error && (
-        <p className="mt-1 text-xs text-destructive">{error}</p>
-      )}
-    </div>
-  );
-}

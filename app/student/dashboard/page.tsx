@@ -1,42 +1,113 @@
-import { StudentCta, StudentStatusBadge } from '@/components/student/student-header';
+import { StudentCta } from '@/components/student/student-header';
 import { StudentGreeting } from '@/components/student/student-greeting';
-import { assignedDictations } from '@/lib/student-data';
-import { mockDictations } from '@/lib/dictation-transcripts';
-import { countScoredWords } from '@/lib/typing/scoring';
+import { db } from '@/lib/db';
+import { headers } from 'next/headers';
+import { auth } from '@/lib/auth';
 import Link from 'next/link';
-import { Headphones, BarChart3, Keyboard, AlignLeft } from 'lucide-react';
+import { Headphones, BarChart3, Keyboard, TrendingUp } from 'lucide-react';
 
-// Availability is date-based — must be evaluated per request, not
-// frozen at build time.
 export const dynamic = 'force-dynamic';
 
-export default function StudentDashboardPage() {
-  const now = new Date();
-  const available = assignedDictations
-    .filter(
-      (d) =>
-        new Date(d.availableFrom) <= now && new Date(d.availableUntil) >= now
-    )
-    .slice(0, 6);
-  const wordCount = (id: string) => {
-    const t = mockDictations.find((m) => m.id === id)?.referenceTranscript ?? '';
-    return countScoredWords(t);
+export default async function StudentDashboardPage() {
+  // Get the current user and their stats.
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  let stats = {
+    totalAttempts: 0,
+    avgWpm: 0,
+    avgAccuracy: 0,
+    bestWpm: 0,
   };
+  let recentAttempts: {
+    id: string;
+    wpm: number;
+    accuracy: number;
+    createdAt: Date;
+  }[] = [];
+  let availableDictations: {
+    id: string;
+    title: string;
+    category: string;
+    youtubeId: string | null;
+  }[] = [];
+
+  if (session?.user) {
+    const profile = await db.studentProfile.findUnique({
+      where: { userId: session.user.id },
+    });
+
+    if (profile) {
+      const [attempts, dictations] = await Promise.all([
+        db.typingAttempt.findMany({
+          where: { studentId: profile.id },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        }),
+        db.dictation.findMany({
+          where: { status: 'PUBLISHED' },
+          take: 6,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            title: true,
+            category: true,
+            youtubeId: true,
+          },
+        }),
+      ]);
+
+      recentAttempts = attempts;
+      availableDictations = dictations;
+
+      if (attempts.length > 0) {
+        const aggregates = await db.typingAttempt.aggregate({
+          where: { studentId: profile.id },
+          _count: { _all: true },
+          _avg: { wpm: true, accuracy: true },
+          _max: { wpm: true },
+        });
+        stats = {
+          totalAttempts: aggregates._count._all,
+          avgWpm: Math.round(aggregates._avg.wpm ?? 0),
+          avgAccuracy: Math.round(aggregates._avg.accuracy ?? 0),
+          bestWpm: aggregates._max.wpm ?? 0,
+        };
+      }
+    }
+  }
 
   return (
     <div className="space-y-10">
       <StudentGreeting description="Pick up where you left off, or jump into a new dictation." />
 
-      <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
-        <p className="text-sm text-warning font-medium">
-          🚧 Under progress — results are not stored yet.
-        </p>
-        <p className="mt-1 text-xs text-warning/80">
-          Scores are shown on the typing page for the current test only and are
-          cleared on refresh. Saved progress will appear here once the database
-          is connected.
-        </p>
-      </div>
+      {/* Stats */}
+      {stats.totalAttempts > 0 && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Your progress
+          </h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
+              <div className="text-3xl font-extrabold text-brand">{stats.totalAttempts}</div>
+              <div className="text-sm text-muted-foreground">Attempts</div>
+            </div>
+            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
+              <div className="text-3xl font-extrabold text-brand">{stats.avgWpm}</div>
+              <div className="text-sm text-muted-foreground">Avg WPM</div>
+            </div>
+            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
+              <div className="text-3xl font-extrabold text-brand">{stats.avgAccuracy}%</div>
+              <div className="text-sm text-muted-foreground">Avg Accuracy</div>
+            </div>
+            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
+              <div className="text-3xl font-extrabold text-brand">{stats.bestWpm}</div>
+              <div className="text-sm text-muted-foreground">Best WPM</div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Shortcuts */}
       <section>
@@ -46,8 +117,8 @@ export default function StudentDashboardPage() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <ShortcutCard
             icon={Headphones}
-            title="Assigned dictations"
-            description="10 test dictations in blind mode"
+            title="Dictations"
+            description="Practice with audio dictations"
             href="/student/dictations"
           />
           <ShortcutCard
@@ -59,48 +130,72 @@ export default function StudentDashboardPage() {
           <ShortcutCard
             icon={BarChart3}
             title="My results"
-            description="Results are not stored yet"
+            description="View your typing history"
             href="/student/results"
           />
         </div>
       </section>
 
-      {/* Test dictations */}
-      <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Test dictations
+      {/* Available dictations */}
+      {availableDictations.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Available dictations
           </h2>
-          <StudentCta href="/student/dictations" label="View all" />
-        </div>
-        {available.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-surface/30 px-4 py-8 text-center text-sm text-muted-foreground">
-            No dictations available right now.
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {available.map((d) => (
-              <li
-                key={d.id}
-                className="rounded-lg border border-border bg-surface px-4 py-3"
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {availableDictations.map((dictation) => (
+              <Link
+                key={dictation.id}
+                href={`/student/typing?mode=dictation&dictationId=${dictation.id}`}
+                className="rounded-3xl border border-border bg-card p-5 hover:border-brand hover-lift animate-fade-in transition-all"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {d.title}
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                      <AlignLeft className="h-3 w-3" />
-                      {wordCount(d.id)} words · {d.category}
-                    </p>
-                  </div>
-                  <StudentStatusBadge status={d.status} />
+                <div className="mb-2">
+                  <span className="rounded bg-brand px-2 py-1 text-xs font-bold text-brand-foreground">
+                    DICTATION
+                  </span>
                 </div>
-              </li>
+                <h3 className="font-medium">{dictation.title}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {dictation.category}
+                </p>
+              </Link>
             ))}
-          </ul>
-        )}
-      </section>
+          </div>
+        </section>
+      )}
+
+      {/* Recent attempts */}
+      {recentAttempts.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Recent attempts
+          </h2>
+          <div className="space-y-2">
+            {recentAttempts.map((attempt) => (
+              <div
+                key={attempt.id}
+                className="flex items-center justify-between rounded-lg border border-border p-3"
+              >
+                <div className="flex items-center gap-3">
+                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium">{attempt.wpm} WPM</div>
+                    <div className="text-sm text-muted-foreground">
+                      {attempt.accuracy}% accuracy
+                    </div>
+                  </div>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {new Date(attempt.createdAt).toLocaleDateString('en-IN', {
+                    day: 'numeric',
+                    month: 'short',
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -111,7 +206,7 @@ function ShortcutCard({
   description,
   href,
 }: {
-  icon: React.ElementType;
+  icon: React.ComponentType<{ className?: string }>;
   title: string;
   description: string;
   href: string;
@@ -119,15 +214,11 @@ function ShortcutCard({
   return (
     <Link
       href={href}
-      className="group flex items-start gap-3 rounded-lg border border-border bg-surface p-4 transition-colors hover:border-brand/40"
+      className="rounded-3xl border border-border bg-card p-5 hover:border-brand hover-lift animate-fade-in transition-all"
     >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-brand">
-        <Icon className="h-4 w-4" strokeWidth={1.5} />
-      </div>
-      <div>
-        <p className="text-sm font-semibold text-foreground">{title}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-      </div>
+      <Icon className="mb-2 h-6 w-6 text-brand" />
+      <h3 className="font-medium">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
     </Link>
   );
 }

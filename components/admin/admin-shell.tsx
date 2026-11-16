@@ -1,11 +1,34 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { AdminSidebar } from './admin-sidebar';
 import { AdminMobileNav } from './admin-mobile-nav';
+import { useAuth } from '@/lib/use-auth';
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+
+  // Redirect to login if session expired
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isLoading, isAuthenticated, router]);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
+        <div className="text-muted-foreground">Checking session...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
 
   return (
     <div className="flex min-h-[calc(100vh-4rem)]">
@@ -13,18 +36,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       <div className="flex-1">
         <AdminMobileNav pathname={pathname} />
         <div className="container-page py-8 lg:py-10">
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <p className="text-xs text-amber-800 font-medium">
-              🚧 Admin panel under progress — changes are not saved yet.
-            </p>
-            <p className="mt-1 text-xs text-amber-700">
-              The real database backend is being connected. Data shown is
-              demo-only and will reset on refresh.
-            </p>
-          </div>
           {children}
         </div>
       </div>
     </div>
   );
 }
+

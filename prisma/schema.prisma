@@ -24,11 +24,6 @@ enum StudentStatus {
   SUSPENDED
 }
 
-enum BatchStatus {
-  ACTIVE
-  ARCHIVED
-}
-
 enum DictationCategory {
   GENERAL
   PROFESSIONAL
@@ -43,7 +38,6 @@ enum DictationStatus {
 
 enum AssignmentTargetType {
   STUDENT
-  BATCH
 }
 
 enum AttemptStatus {
@@ -58,12 +52,6 @@ enum EvaluationErrorType {
   MISSING
   EXTRA
   SUBSTITUTION
-}
-
-enum FeeStatus {
-  PAID
-  PENDING
-  OVERDUE
 }
 
 enum ScheduleStatus {
@@ -109,13 +97,9 @@ model User {
 
   createdDictations Dictation[] @relation("DictationCreatedBy")
 
-  createdTypingTests TypingTest[] @relation("TypingTestCreatedBy")
 
-  fees Fee[] @relation("FeeRecordedBy")
 
-  announcements Announcement[] @relation("AnnouncementCreatedBy")
 
-  createdSchedules Schedule[] @relation("ScheduleCreatedBy")
 
   sessions     Session[]
   accounts     Account[]
@@ -163,36 +147,12 @@ model StudentProfile {
   status StudentStatus @default(ACTIVE)
   notes  String?
 
-  batchId String?
-  batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: SetNull)
-
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  assignments Assignment[]
 
-  attempts Attempt[]
 
   typingAttempts TypingAttempt[]
 
-  fees Fee[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([batchId])
-  @@index([status])
-}
-
-model Batch {
-  id       String      @id @default(uuid())
-  name     String      @unique
-  schedule String
-  time     String
-  status   BatchStatus @default(ACTIVE)
-
-  students StudentProfile[]
-
-  assignments Assignment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -221,9 +181,7 @@ model Dictation {
   createdById String
   createdBy   User   @relation("DictationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
-  assignments Assignment[]
 
-  schedules Schedule[]
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -240,40 +198,10 @@ model Dictation {
 // ============================================================
 // An assignment targets either:
 // STUDENT -> studentId populated
-// BATCH   -> batchId populated
 // Application/server validation must enforce that exactly one
 // target is supplied.
 //
 
-model Assignment {
-  id String @id @default(uuid())
-
-  dictationId String
-  dictation   Dictation @relation(fields: [dictationId], references: [id], onDelete: Restrict)
-
-  targetType AssignmentTargetType
-
-  studentId String?
-  student   StudentProfile? @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  batchId String?
-  batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: Cascade)
-
-  availableFrom  DateTime
-  availableUntil DateTime?
-
-  allowReplay Boolean @default(true)
-  blindMode   Boolean @default(true)
-
-  assignedAt DateTime @default(now())
-
-  attempts Attempt[]
-
-  @@index([dictationId])
-  @@index([studentId])
-  @@index([batchId])
-  @@index([targetType])
-}
 
 //
 // ============================================================
@@ -282,33 +210,6 @@ model Assignment {
 // A student is reached through their StudentProfile (single link).
 //
 
-model Attempt {
-  id String @id @default(uuid())
-
-  assignmentId String
-  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
-
-  studentId String
-  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
-
-  submittedText String
-
-  elapsedMs Int
-  status    AttemptStatus @default(IN_PROGRESS)
-
-  startedAt   DateTime  @default(now())
-  submittedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  evaluation EvaluationResult?
-
-  errors EvaluationError[]
-
-  @@index([assignmentId])
-  @@index([studentId, createdAt])
-  @@index([status])
-}
 
 //
 // ============================================================
@@ -319,61 +220,7 @@ model Attempt {
 // counts split by words and punctuation.
 //
 
-model EvaluationResult {
-  id String @id @default(uuid())
 
-  attemptId String  @unique
-  attempt   Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-
-  accuracy   Float // exact items (words + punctuation) / evaluated items
-  completion Float // 0-100, coverage of the reference
-  netWpm     Float
-  rawWpm     Float
-  scored     Boolean @default(true)
-
-  expectedWordCount Int
-  typedWordCount    Int
-
-  correctCount Int
-  wrongCount   Int
-  missedCount  Int
-  extraCount   Int
-
-  correctWordCount Int
-  wrongWordCount   Int
-  missedWordCount  Int
-  extraWordCount   Int
-
-  correctPunctCount Int
-  wrongPunctCount   Int
-  missedPunctCount  Int
-  extraPunctCount   Int
-
-  createdAt DateTime @default(now())
-
-  @@index([accuracy])
-  @@index([createdAt])
-}
-
-model EvaluationError {
-  id String @id @default(uuid())
-
-  attemptId String
-  attempt   Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-
-  type EvaluationErrorType
-
-  position Int
-
-  expected String?
-  actual   String?
-
-  createdAt DateTime @default(now())
-
-  @@index([attemptId])
-  @@index([attemptId, position])
-  @@index([type])
-}
 
 //
 // ============================================================
@@ -381,34 +228,11 @@ model EvaluationError {
 // ============================================================
 //
 
-model TypingTest {
-  id String @id @default(uuid())
-
-  title    String
-  category DictationCategory
-  text     String
-
-  status TypingTestStatus @default(DRAFT)
-
-  createdById String
-  createdBy   User   @relation("TypingTestCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-
-  attempts TypingAttempt[]
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  publishedAt DateTime?
-
-  @@index([status])
-  @@index([category])
-}
 
 model TypingAttempt {
   id String @id @default(uuid())
 
   // Nullable for free-typing mode (no specific test assigned).
-  typingTestId String?
-  typingTest   TypingTest? @relation(fields: [typingTestId], references: [id], onDelete: Restrict)
 
   studentId String
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
@@ -427,7 +251,6 @@ model TypingAttempt {
 
   createdAt DateTime @default(now())
 
-  @@index([typingTestId])
   @@index([studentId, createdAt])
 }
 
@@ -437,60 +260,12 @@ model TypingAttempt {
 // ============================================================
 //
 
-model Fee {
-  id String @id @default(uuid())
-
-  studentId String
-  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
-
-  amount  Int
-  dueDate DateTime
-
-  status FeeStatus @default(PENDING)
-
-  paidDate DateTime?
-  notes    String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  recordedById String?
-  recordedBy   User?   @relation("FeeRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
-
-  @@index([studentId])
-  @@index([status])
-  @@index([dueDate])
-}
-
 //
 // ============================================================
 // SCHEDULE
 // ============================================================
 //
 
-model Schedule {
-  id String @id @default(uuid())
-
-  dictationId String
-  dictation   Dictation @relation(fields: [dictationId], references: [id], onDelete: Restrict)
-
-  audience String
-
-  startsAt DateTime
-  endsAt   DateTime
-
-  status ScheduleStatus @default(UPCOMING)
-
-  createdById String
-  createdBy   User   @relation("ScheduleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([dictationId])
-  @@index([startsAt])
-  @@index([status])
-}
 
 //
 // ============================================================
@@ -498,21 +273,6 @@ model Schedule {
 // ============================================================
 //
 
-model Announcement {
-  id String @id @default(uuid())
-
-  text String
-
-  published Boolean @default(true)
-
-  createdById String
-  createdBy   User   @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([published, createdAt])
-}
 
 //
 // ============================================================

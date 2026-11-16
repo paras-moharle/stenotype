@@ -3,9 +3,9 @@
 @theme {
   /* ─── Rich Dark Foundation ─── */
   /* Page background — deep warm near-black */
-  --color-background: #0d0c0a;
+  --color-background: #121110;
   /* Elevated surface — cards, panels */
-  --color-surface: #151412;
+  --color-surface: #1c1a17;
   /* Interactive surface hover */
   --color-surface-hover: #1a1916;
   /* Muted areas */
@@ -25,9 +25,9 @@
 
   /* ─── Brand / Accent ─── */
   /* Warm muted amber — StenoType identity */
-  --color-brand: #d4a84b;
+  --color-brand: #e8b84b;
   --color-brand-foreground: #0d0c0a;
-  --color-brand-soft: #2a2418;
+  --color-brand-soft: #3a2f1a;
   --color-brand-muted: #6b5a3a;
   /* Focus ring */
   --color-ring: #d4a84b;
@@ -52,7 +52,7 @@
   --color-accent: #1a1916;
   --color-accent-foreground: #f2f0e8;
 
-  --radius: 0.375rem;
+  --radius: 1rem;
 }
 
 @layer base {
@@ -198,3 +198,108 @@
 .animate-fade-in-up {
   animation: fade-in-up 0.4s ease-out both;
 }
+
+
+/* ─── Playful animations ─── */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+  }
+  .animate-scale-in {
+    animation: scale-in 0.2s ease-out;
+  }
+  .hover-lift {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+  }
+}
+
+
+/* ─── Enhanced animations ─── */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@layer utilities {
+  .animate-slide-up {
+    animation: slide-up 0.4s ease-out;
+  }
+  .animate-pulse-soft {
+    animation: pulse-soft 2s ease-in-out infinite;
+  }
+}
+
+
+/* ─── Modern custom scrollbar ─── */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-brand-muted);
+  border-radius: 999px;
+  border: 3px solid var(--color-surface);
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-brand);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--color-surface);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: var(--color-brand-muted) var(--color-surface);
+}
+

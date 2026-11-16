@@ -16,7 +16,7 @@ import { align, scoreFromAlignment } from '@/lib/typing/scoring';
  * Body (validated by sessionSubmissionSchema):
  * {
  *   passageId?: string,      // ID of a TypingTest (if applicable)
- *   customText?: string,     // Reference text for custom/free mode
+ *   customText?: string,     // Deprecated — custom text no longer accepted as reference
  *   typed: string,           // What the student typed
  *   elapsedMs: number,       // Time taken in milliseconds
  *   clientWpm: number,       // Ignored (server re-computes)
@@ -59,16 +59,18 @@ export async function POST(request: Request) {
     parsed.data;
 
   // ── Resolve reference text ────────────────────────────
+  // Transcripts are fetched server-side only. The client never
+  // receives the reference text before scoring.
   let reference: string | null = null;
 
   if (passageId) {
-    const test = await db.typingTest.findUnique({
+    const dictation = await db.dictation.findUnique({
       where: { id: passageId },
-      select: { text: true },
+      select: { referenceTranscript: true, status: true },
     });
-    reference = test?.text ?? null;
-  } else if (customText) {
-    reference = customText;
+    if (dictation?.status === 'PUBLISHED') {
+      reference = dictation.referenceTranscript;
+    }
   }
 
   if (!reference) {
@@ -97,7 +99,6 @@ export async function POST(request: Request) {
   // ── Store the attempt ─────────────────────────────────
   const attempt = await db.typingAttempt.create({
     data: {
-      typingTestId: passageId ?? null,
       studentId: profile.id,
       typedText: typed,
       elapsedMs,
@@ -111,8 +112,11 @@ export async function POST(request: Request) {
 
   // ── Return the server-computed score ──────────────────
   // The client displays THIS, not its own computation.
+  // The reference text is included for the review display
+  // (shown only after completion, not during typing).
   return NextResponse.json({
     attemptId: attempt.id,
+    reference, // For review display — sent only after scoring.
     score: {
       accuracy: score.accuracy,
       completion: score.completion,

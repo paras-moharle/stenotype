@@ -32,11 +32,6 @@
  */
 
 import { z } from 'zod';
-import {
-  countScoredWords,
-  MAX_ALIGN_CHARS,
-  normalizeText,
-} from './typing/scoring';
 
 /* ─── Shared primitives ──────────────────────────────────── */
 
@@ -80,34 +75,11 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export const studentStatusSchema = z.enum(['Active', 'Inactive', 'Suspended']);
 export type StudentStatus = z.infer<typeof studentStatusSchema>;
 
-export const studentSchema = z.object({
-  name: nameSchema,
-  email: emailSchema,
-  phone: phoneSchema.optional(),
-  batchId: z.string().min(1, 'Select a batch'),
-  status: studentStatusSchema.default('Active'),
-  notes: z.string().max(500).optional(),
-});
-export type StudentInput = z.infer<typeof studentSchema>;
+
 
 /* ─── Batch ─────────────────────────────────────────────── */
 
-export const batchSchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Batch name is required')
-    .max(40, 'Batch name is too long'),
-  schedule: z
-    .string()
-    .min(1, 'Schedule is required')
-    .max(80, 'Schedule is too long'),
-  time: z
-    .string()
-    .min(1, 'Time is required')
-    .regex(/^\d{1,2}:\d{2}\s*(AM|PM)?$/i, 'Use a time like 6:00 PM'),
-  status: z.enum(['Active', 'Archived']).default('Active'),
-});
-export type BatchInput = z.infer<typeof batchSchema>;
+
 
 /* ─── Dictation ─────────────────────────────────────────── */
 
@@ -127,54 +99,11 @@ export const dictationAssignmentSchema = z.enum([
 ]);
 export type DictationAssignment = z.infer<typeof dictationAssignmentSchema>;
 
-export const dictationSchema = z.object({
-  title: z
-    .string()
-    .min(3, 'Title must be at least 3 characters')
-    .max(120, 'Title is too long'),
-  category: dictationCategorySchema,
-  status: dictationStatusSchema.default('Draft'),
-  assignedTo: dictationAssignmentSchema.default('All'),
-  availableFrom: z.string().min(1, 'Pick a start date'),
-  availableUntil: z.string().min(1, 'Pick an end date'),
-  referenceTranscript: z
-    .string()
-    .min(20, 'Transcript is too short')
-    .max(20_000, 'Transcript is too long'),
-  /** Cloudflare R2 object key — filled in after upload. */
-  audioKey: z.string().optional(),
-  /** Duration in seconds — derived from the audio file. */
-  durationSeconds: z.number().int().positive().optional(),
-});
-export type DictationInput = z.infer<typeof dictationSchema>;
+
 
 /* ─── Typing passage ────────────────────────────────────── */
 
-export const typingPassageSchema = z.object({
-  title: z
-    .string()
-    .min(3, 'Title must be at least 3 characters')
-    .max(120, 'Title is too long'),
-  category: dictationCategorySchema,
-  text: z
-    .string()
-    .refine(
-      (t) => countScoredWords(t) >= 10,
-      'Passage must be at least 10 words'
-    )
-    .refine(
-      (t) => countScoredWords(t) <= 500,
-      'Passage is too long'
-    )
-    // Raw-character cap: a 30k-char "10-word" passage would pass
-    // the word-count checks but make align() throw at render.
-    .refine(
-      (t) => normalizeText(t).length <= MAX_ALIGN_CHARS,
-      `Passage must be at most ${MAX_ALIGN_CHARS} characters`
-    ),
-  status: dictationStatusSchema.default('Draft'),
-});
-export type TypingPassageInput = z.infer<typeof typingPassageSchema>;
+
 
 /**
  * The "paste your own passage" feature (class-only, future).
@@ -182,35 +111,14 @@ export type TypingPassageInput = z.infer<typeof typingPassageSchema>;
  * transcription against it using the same scoring code path
  * as the curated passage library.
  */
-export const customPassageSchema = z.object({
-  text: z
-    .string()
-    .refine(
-      (t) => countScoredWords(t) >= 10,
-      'Paste at least 10 words of text'
-    )
-    .refine(
-      (t) => t.length <= 5_000,
-      'Text is too long (max 5,000 characters)'
-    ),
-  title: z.string().max(120).optional(),
-});
-export type CustomPassageInput = z.infer<typeof customPassageSchema>;
+
 
 /* ─── Fee ───────────────────────────────────────────────── */
 
 export const feeStatusSchema = z.enum(['Paid', 'Pending', 'Overdue']);
 export type FeeStatus = z.infer<typeof feeStatusSchema>;
 
-export const feeSchema = z.object({
-  studentId: z.string().min(1, 'Select a student'),
-  amount: amountSchema,
-  dueDate: z.string().min(1, 'Pick a due date'),
-  status: feeStatusSchema.default('Pending'),
-  paidDate: z.string().nullable().optional(),
-  notes: z.string().max(200).optional(),
-});
-export type FeeInput = z.infer<typeof feeSchema>;
+
 
 /* ─── Schedule ──────────────────────────────────────────── */
 
@@ -233,19 +141,7 @@ export type ScheduleItemInput = z.infer<typeof scheduleItemSchema>;
 
 /* ─── Settings ──────────────────────────────────────────── */
 
-export const settingsSchema = z.object({
-  siteName: z.string().min(1, 'Site name is required').max(60),
-  tagline: z.string().min(1, 'Tagline is required').max(120),
-  defaultDuration: z
-    .number()
-    .int()
-    .refine((v) => [15, 30, 60].includes(v), 'Choose 15, 30, or 60 seconds'),
-  defaultDictationStatus: dictationStatusSchema,
-  notifyOnNewStudent: z.boolean().default(true),
-  notifyOnFeePayment: z.boolean().default(true),
-  weeklySummary: z.boolean().default(false),
-});
-export type SettingsInput = z.infer<typeof settingsSchema>;
+
 
 /* ─── Typing session submission (future API) ────────────── */
 

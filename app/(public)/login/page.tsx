@@ -50,13 +50,13 @@ export default function LoginPage() {
           </Link>
         </div>
 
-        <div className="rounded-lg border border-border bg-surface p-6">
-          <div className="mb-5 flex items-center gap-2">
-            <LogIn className="h-4 w-4 text-brand" strokeWidth={1.5} />
-            <h1 className="text-lg font-semibold text-foreground">Sign in</h1>
+        <div className="rounded-[2rem] border border-border bg-surface p-8 shadow-2xl animate-scale-in">
+          <div className="mb-8 flex items-center gap-3">
+            <LogIn className="h-6 w-6 text-brand" strokeWidth={1.8} />
+            <h1 className="text-2xl font-bold text-foreground">Sign in</h1>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-1.5">
               <label htmlFor="email" className="text-sm font-medium text-foreground">
                 Email
@@ -68,7 +68,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
-                className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
+                className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20 transition-all"
               />
             </div>
 
@@ -87,7 +87,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
-                  className="h-10 w-full rounded-md border border-border bg-background pl-3 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
+                  className="h-12 w-full rounded-2xl border border-border bg-background pl-4 pr-12 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20 transition-all"
                 />
                 <button
                   type="button"
@@ -105,7 +105,7 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive animate-fade-in">
                 {error}
               </p>
             )}
@@ -134,3 +134,4 @@ export default function LoginPage() {
     </div>
   );
 }
+

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { LogOut, User } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 import { Button } from '@/components/ui/button';
+import { Logo } from '@/components/site/logo';
 
 export function StudentTopbar() {
   const { user, isAuthenticated, signOut } = useAuth();
@@ -11,21 +12,12 @@ export function StudentTopbar() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
       <div className="flex h-14 items-center justify-between gap-2 px-4 sm:h-16 sm:px-6">
-        <Link
-          href="/student/dashboard"
-          className="flex min-w-0 items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground"
-        >
-          <span
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-brand text-[12px] font-bold leading-none text-brand-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.15),0_0_0_1px_rgba(255,255,255,0.04)]"
-            aria-hidden="true"
-          >
-            S
-          </span>
-          <span className="truncate">StenoType</span>
-          <span className="ml-1 hidden font-mono text-[10px] uppercase tracking-widest text-brand sm:inline">
+        <div className="flex min-w-0 items-center gap-3">
+          <Logo size="sm" />
+          <span className="hidden font-mono text-[10px] uppercase tracking-widest text-brand sm:inline">
             Student
           </span>
-        </Link>
+        </div>
 
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
           {isAuthenticated ? (
@@ -60,3 +52,4 @@ export function StudentTopbar() {
     </header>
   );
 }
+

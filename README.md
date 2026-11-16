@@ -2,6 +2,15 @@
 
 A typing/stenography practice app for students. Built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, Prisma 7, Better Auth, and Neon Postgres.
 
+## Features
+
+- **Typing practice** — Free typing, custom paste, and blind dictation modes
+- **Server-side scoring** — Results computed on the server, never trusted from client
+- **Dictation management** — Admin uploads YouTube dictations with transcripts
+- **Student tracking** — Fees, batches, and progress monitoring
+- **Secure auth** — Better Auth with single-session enforcement and login audit
+- **Admin controls** — Ban users, revoke sessions, view login history
+
 ## Quick start
 
 ### Prerequisites
@@ -13,7 +22,7 @@ A typing/stenography practice app for students. Built with Next.js 16, React 19,
 
 ```bash
 # 1. Install dependencies (postinstall runs `prisma generate`)
-npm install
+pnpm install
 
 # 2. Copy env template and fill in your values
 cp .env.example .env.local
@@ -26,8 +35,11 @@ npx prisma migrate dev
 # 4. Seed the admin + student accounts
 npx prisma db seed
 
-# 5. Start the dev server
-npm run dev
+# 5. Seed dictations
+node --env-file=.env.local --import tsx prisma/seed-dictations.ts
+
+# 6. Start the dev server
+pnpm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) and sign in with the seed accounts from your `.env.local`.
@@ -50,17 +62,45 @@ All secrets live in `.env.local` (gitignored). See `.env.example` for the full l
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Start the dev server |
-| `npm run build` | Production build |
+| `pnpm run dev` | Start the dev server |
+| `pnpm run build` | Production build (runs `prisma generate` first) |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | TypeScript check |
 | `npm test` | Run tests (`tsx --test`) |
 | `npx prisma migrate dev` | Create + apply a migration |
 | `npx prisma db seed` | Seed admin + student accounts |
+| `npx prisma studio` | Visual database browser (http://localhost:5555) |
+
+## Deploy to Vercel
+
+### 1. Set environment variables in Vercel dashboard
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Your Neon connection string |
+| `BETTER_AUTH_SECRET` | Same as `.env.local` |
+| `BETTER_AUTH_URL` | `https://your-app.vercel.app` |
+| `RESEND_API_KEY` | Your Resend key (optional) |
+
+### 2. Push to GitHub
+
+```bash
+git add -A
+git commit -m "Your message"
+git push
+```
+
+Vercel auto-deploys on push. The build runs `prisma generate && next build`.
+
+### 3. Verify
+
+- Visit your Vercel URL
+- Try logging in with seed credentials
+- Check that `/api/auth/get-session` returns 200 (not 404/500)
 
 ## Auth
 
-Better Auth with email/password and DB-backed sessions. Single active session per user (a new sign-in revokes others). Every successful sign-in is written to the `LoginAttempt` audit table. Admins can ban users and revoke sessions via the Better Auth admin plugin.
+Better Auth with email/password and DB-backed sessions. Single active session per user (a new sign-in revokes others). Every successful sign-in is written to the `LoginAttempt` audit table. Admins can ban users and revoke sessions via the admin API.
 
 ## Project structure
 

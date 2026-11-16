@@ -9,6 +9,7 @@ import {
   User,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Logo } from '@/components/site/logo';
 
 const studentLinks = [
   { href: '/student/dashboard', label: 'Dashboard', icon: LayoutDashboard, exact: true },
@@ -24,14 +25,15 @@ interface StudentSidebarProps {
 
 export function StudentSidebar({ pathname }: StudentSidebarProps) {
   return (
-    <aside className="hidden w-60 shrink-0 border-r border-border bg-surface/50 md:block">
+    <aside className="hidden w-64 shrink-0 border-r border-border bg-surface/50 md:block">
       <div className="sticky top-16 flex h-[calc(100vh-4rem)] flex-col">
         <div className="border-b border-border px-5 py-4">
-          <p className="text-[10px] font-medium uppercase tracking-widest text-brand">
-            Student
+          <Logo size="sm" />
+          <p className="mt-2 text-[10px] font-medium uppercase tracking-widest text-brand">
+            Student Panel
           </p>
         </div>
-        <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
+        <nav className="flex-1 space-y-1.5 overflow-y-auto p-4">
           {studentLinks.map((link) => {
             const Icon = link.icon;
             const isActive = link.exact
@@ -42,13 +44,13 @@ export function StudentSidebar({ pathname }: StudentSidebarProps) {
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition-all duration-200',
                   isActive
-                    ? 'bg-accent text-foreground'
-                    : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                    ? 'bg-brand/15 text-brand shadow-sm'
+                    : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground hover:translate-x-0.5'
                 )}
               >
-                <Icon className="h-4 w-4" strokeWidth={1.5} />
+                <Icon className="h-5 w-5" strokeWidth={1.8} />
                 {link.label}
               </Link>
             );
@@ -58,3 +60,4 @@ export function StudentSidebar({ pathname }: StudentSidebarProps) {
     </aside>
   );
 }
+

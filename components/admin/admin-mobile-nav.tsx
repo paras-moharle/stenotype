@@ -6,13 +6,8 @@ import { useState } from 'react';
 import {
   LayoutDashboard,
   Users,
-  UsersRound,
   Headphones,
   BarChart3,
-  IndianRupee,
-  Calendar,
-  BookOpen,
-  Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/use-auth';
@@ -20,13 +15,8 @@ import { useAuth } from '@/lib/use-auth';
 const adminLinks = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/students', label: 'Students', icon: Users },
-  { href: '/admin/batches', label: 'Batches', icon: UsersRound },
   { href: '/admin/dictations', label: 'Dictations', icon: Headphones },
   { href: '/admin/results', label: 'Results', icon: BarChart3 },
-  { href: '/admin/fees', label: 'Fees', icon: IndianRupee },
-  { href: '/admin/schedule', label: 'Schedule', icon: Calendar },
-  { href: '/admin/content', label: 'Content', icon: BookOpen },
-  { href: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
 interface AdminMobileNavProps {
@@ -85,11 +75,11 @@ export function AdminMobileNav({ pathname }: AdminMobileNavProps) {
                 className={cn(
                   'flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   isActive
-                    ? 'bg-accent text-foreground'
+                    ? 'bg-brand/15 text-brand'
                     : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
                 )}
               >
-                <Icon className="h-4 w-4" strokeWidth={1.5} />
+                <Icon className="h-5 w-5" strokeWidth={1.8} />
                 {link.label}
               </Link>
             );
@@ -99,3 +89,4 @@ export function AdminMobileNav({ pathname }: AdminMobileNavProps) {
     </div>
   );
 }
+

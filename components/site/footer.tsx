@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Github } from 'lucide-react';
+import { Logo } from '@/components/site/logo';
 
 const footerLinks = [
   { href: '/', label: 'Typing practice' },
@@ -9,16 +10,8 @@ const footerLinks = [
 export function Footer() {
   return (
     <footer className="border-t border-border bg-background">
-      <div className="container-page flex flex-col items-center justify-between gap-6 py-10 sm:flex-row">
-        <div className="flex items-center gap-2.5 text-sm font-semibold tracking-tight text-foreground">
-          <span
-            className="flex h-6 w-6 items-center justify-center rounded-[5px] bg-brand text-[10px] font-bold leading-none text-brand-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.15),0_0_0_1px_rgba(255,255,255,0.04)]"
-            aria-hidden="true"
-          >
-            S
-          </span>
-          StenoType
-        </div>
+      <div className="container-page flex flex-col items-center justify-between gap-8 py-12 sm:flex-row">
+        <Logo size="sm" />
 
         <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
           {footerLinks.map((link) => (
@@ -52,3 +45,4 @@ export function Footer() {
     </footer>
   );
 }
+

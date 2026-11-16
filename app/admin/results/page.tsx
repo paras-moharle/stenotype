@@ -1,38 +1,112 @@
-'use client';
-
 import { AdminHeader } from '@/components/admin/admin-header';
-import { BarChart3 } from 'lucide-react';
+import { AdminTable } from '@/components/admin/admin-table';
+import { db } from '@/lib/db';
 
-export default function AdminResultsPage() {
+export const dynamic = 'force-dynamic';
+
+type Attempt = {
+  id: string;
+  wpm: number;
+  accuracy: number;
+  correctCharacters: number;
+  incorrectCharacters: number;
+  completed: boolean;
+  createdAt: Date;
+  student: {
+    user: {
+      name: string;
+      email: string;
+    };
+  };
+};
+
+export default async function AdminResultsPage() {
+  const attempts = await db.typingAttempt.findMany({
+    take: 100,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      student: {
+        include: {
+          user: {
+            select: { name: true, email: true },
+          },
+        },
+      },
+    },
+  });
+
+  const columns = [
+    {
+      key: 'student',
+      header: 'Student',
+      render: (a: Attempt) => (
+        <div>
+          <div className="font-medium">{a.student.user.name}</div>
+          <div className="text-sm text-muted-foreground">
+            {a.student.user.email}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'wpm',
+      header: 'WPM',
+      render: (a: Attempt) => a.wpm,
+    },
+    {
+      key: 'accuracy',
+      header: 'Accuracy',
+      render: (a: Attempt) => `${a.accuracy}%`,
+    },
+    {
+      key: 'correct',
+      header: 'Correct',
+      render: (a: Attempt) => a.correctCharacters,
+    },
+    {
+      key: 'incorrect',
+      header: 'Incorrect',
+      render: (a: Attempt) => a.incorrectCharacters,
+    },
+    {
+      key: 'completed',
+      header: 'Completed',
+      render: (a: Attempt) => (a.completed ? 'Yes' : 'No'),
+    },
+    {
+      key: 'date',
+      header: 'Date',
+      render: (a: Attempt) =>
+        new Date(a.createdAt).toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          day: 'numeric',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+    },
+  ];
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <AdminHeader
         title="Results"
-        description="Recent practice results and performance data."
+        description="Student typing attempt results"
       />
 
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <p className="text-sm text-amber-800 font-medium">
-          🚧 Under progress — results are not stored yet.
-        </p>
-        <p className="mt-1 text-xs text-amber-700">
-          Student scores are shown only for the current test session. Saved
-          history will appear here once the database backend is connected.
-        </p>
-      </div>
-
-      <div className="rounded-lg border border-dashed border-border bg-surface/30 px-6 py-16 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand/10 text-brand">
-          <BarChart3 className="h-5 w-5" strokeWidth={1.5} />
+      {attempts.length === 0 ? (
+        <div className="rounded-lg border border-border p-8 text-center text-muted-foreground">
+          No typing attempts yet. Results will appear here once students
+          complete their first dictation.
         </div>
-        <h2 className="mt-4 text-base font-semibold text-foreground">
-          No results yet
-        </h2>
-        <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-          Results are not persisted yet, so there is nothing to show. This page
-          will populate once the database is connected.
-        </p>
-      </div>
+      ) : (
+        <AdminTable
+          columns={columns}
+          rows={attempts}
+          rowKey={(a) => a.id}
+        />
+      )}
     </div>
   );
 }
+
