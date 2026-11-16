@@ -46,11 +46,11 @@ export function StudentMobileNav({ pathname }: StudentMobileNavProps) {
               href={link.href}
               aria-current={isActive ? 'page' : undefined}
               className={cn(
-                'flex flex-col items-center gap-1.5 py-3 text-[11px] font-medium transition-all',
+                'flex flex-col items-center gap-1 py-2 text-[10px] font-medium transition-all',
                 isActive ? 'text-brand' : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              <Icon className="h-6 w-6" strokeWidth={1.8} />
+              <Icon className="h-5 w-5" strokeWidth={1.8} />
               {link.label}
             </Link>
           );

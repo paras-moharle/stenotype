@@ -79,7 +79,7 @@ export function AdminMobileNav({ pathname }: AdminMobileNavProps) {
                     : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
                 )}
               >
-                <Icon className="h-5 w-5" strokeWidth={1.8} />
+                <Icon className="h-4 w-4" strokeWidth={1.8} />
                 {link.label}
               </Link>
             );

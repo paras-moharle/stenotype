@@ -11,24 +11,8 @@ export function StudentShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
 
-  // Redirect to login if session expired
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [isLoading, isAuthenticated, router]);
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
-        <div className="text-muted-foreground">Checking session...</div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return null;
-  }
+  // Don't block navigation - layout handles auth server-side
+  // Just show content, API calls will return 401 if session expired
 
   return (
     <div className="flex min-h-[calc(100vh-4rem)]">
