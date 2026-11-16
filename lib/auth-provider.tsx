@@ -110,17 +110,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    setUser(null);
     try {
-      await fetch('/api/auth/sign-out', {
+      const res = await fetch('/api/auth/sign-out', {
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
       });
+      // Wait for cookie to be cleared
+      if (res.ok) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
     } catch {
-      /* ignore network errors — still redirect */
+      /* ignore network errors */
     }
-    setUser(null);
-    window.location.replace('/');
+    window.location.href = '/login';
   }, []);
 
   const value = useMemo<AuthContextValue>(
