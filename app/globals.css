@@ -69,6 +69,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     position: relative;
+    touch-action: manipulation;
   }
   /* Subtle technical background detail — visible but subordinate to UI */
   body::before {
