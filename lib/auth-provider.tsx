@@ -116,6 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       });
       // Wait for cookie to be cleared
       if (res.ok) {
