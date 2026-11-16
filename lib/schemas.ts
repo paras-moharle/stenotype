@@ -32,7 +32,11 @@
  */
 
 import { z } from 'zod';
-import { countScoredWords } from './typing/scoring';
+import {
+  countScoredWords,
+  MAX_ALIGN_CHARS,
+  normalizeText,
+} from './typing/scoring';
 
 /* ─── Shared primitives ──────────────────────────────────── */
 
@@ -66,7 +70,8 @@ export const amountSchema = z
  */
 export const loginSchema = z.object({
   email: emailSchema,
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  // Must match Better Auth's minPasswordLength (8) in lib/auth.ts.
+  password: z.string().min(8, 'Password must be at least 8 characters'),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
@@ -160,6 +165,12 @@ export const typingPassageSchema = z.object({
     .refine(
       (t) => countScoredWords(t) <= 500,
       'Passage is too long'
+    )
+    // Raw-character cap: a 30k-char "10-word" passage would pass
+    // the word-count checks but make align() throw at render.
+    .refine(
+      (t) => normalizeText(t).length <= MAX_ALIGN_CHARS,
+      `Passage must be at most ${MAX_ALIGN_CHARS} characters`
     ),
   status: dictationStatusSchema.default('Draft'),
 });
@@ -247,7 +258,9 @@ export type SettingsInput = z.infer<typeof settingsSchema>;
 export const sessionSubmissionSchema = z.object({
   passageId: z.string().optional(),
   customText: z.string().optional(),
-  typed: z.string().max(20_000),
+  // 20,000 (MAX_ALIGN_CHARS) + 40 (MAX_EXTRA_CHARS overshoot the
+  // client allows) = 20,040. Must match the client's legal payload.
+  typed: z.string().max(20_040),
   elapsedMs: z.number().int().nonnegative(),
   /** Client-reported WPM — server will re-verify. */
   clientWpm: z.number().int().nonnegative(),

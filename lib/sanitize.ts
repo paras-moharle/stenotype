@@ -25,12 +25,20 @@
 const ASCII_PUNCTUATION: Record<string, string> = {
   '\u2018': "'", '\u2019': "'", '\u201C': '"', '\u201D': '"',
   '\u2013': '-', '\u2014': '-', '\u2026': '...',
+  '\u2032': "'", '\u2033': '"',
   '\u00A0': ' ', '\u2009': ' ', '\u200B': '', '\u200C': '', '\u200D': '',
   '\uFEFF': '',
 };
 
-/** Invisible characters: delete without inserting a word break. */
-const ZERO_WIDTH = new Set(['\u200B', '\u200C', '\u200D', '\uFEFF']);
+/**
+ * Invisible characters: delete without inserting a word break.
+ * Includes the soft hyphen (U+00AD) and word joiner (U+2060) —
+ * without these, they fall through to the space substitution
+ * below and split one word into two.
+ */
+const ZERO_WIDTH = new Set([
+  '\u200B', '\u200C', '\u200D', '\uFEFF', '\u00AD', '\u2060',
+]);
 
 /**
  * Transliterate a single non-ASCII character to ASCII if possible
@@ -91,3 +99,4 @@ export function sanitizeForTyping(s: string): string {
 
   return out.join('').replace(/\s+/g, ' ').trim();
 }
+

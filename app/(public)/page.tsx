@@ -1,6 +1,6 @@
-import { cookies } from 'next/headers';
+import { headers } from 'next/headers';
 import TypingClient from '@/components/typing/typing-client';
-import { SESSION_COOKIE, verifySession } from '@/lib/auth-server';
+import { auth } from '@/lib/auth';
 
 /**
  * Home = the typing test. The passage is the focus, the timer starts
@@ -11,9 +11,10 @@ import { SESSION_COOKIE, verifySession } from '@/lib/auth-server';
  * The session is checked server-side so there is no client flash.
  */
 export default async function HomePage() {
-  const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
-  const authenticated = Boolean(token && verifySession(token));
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+  const authenticated = Boolean(session?.user);
 
   return (
     <div className="container-page py-4 sm:py-6 lg:py-8">
@@ -21,3 +22,4 @@ export default async function HomePage() {
     </div>
   );
 }
+

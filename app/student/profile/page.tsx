@@ -64,8 +64,8 @@ export default function StudentProfilePage() {
         description="Your account information and batch details."
       />
 
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <p className="text-sm text-amber-800 font-medium">
+      <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+        <p className="text-sm text-warning font-medium">
           🚧 Under progress — profile editing and batch details are coming soon.
         </p>
       </div>
@@ -140,3 +140,4 @@ function Row({
     </div>
   );
 }
+

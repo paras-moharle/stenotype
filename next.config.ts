@@ -14,6 +14,22 @@ const devOrigins = (process.env.DEV_ORIGINS ?? "")
 const nextConfig: NextConfig = {
   images: { unoptimized: true },
   ...(devOrigins.length > 0 ? { allowedDevOrigins: devOrigins } : {}),
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=63072000; includeSubDomains; preload',
+          },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

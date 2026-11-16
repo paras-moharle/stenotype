@@ -2,7 +2,6 @@
 
 import { usePathname } from 'next/navigation';
 import { Info } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 export function PreviewBanner() {
   const pathname = usePathname();
@@ -27,3 +26,4 @@ export function PreviewBanner() {
     </div>
   );
 }
+

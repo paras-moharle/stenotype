@@ -11,7 +11,6 @@ interface AdminTableProps<T> {
   columns: AdminTableColumn<T>[];
   rows: T[];
   rowKey: (row: T) => string;
-  emptyMessage?: string;
   className?: string;
 }
 
@@ -68,3 +67,4 @@ export function AdminTable<T>({
     </div>
   );
 }
+

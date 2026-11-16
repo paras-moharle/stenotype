@@ -15,7 +15,6 @@ import {
   CheckCircle2,
   ArrowRight,
   X,
-  Type,
   Headphones,
   Eye,
   EyeOff,
@@ -32,6 +31,7 @@ import {
   buildTokenDisplayItems,
   countScoredWords,
   formatClock,
+  MAX_ALIGN_CHARS,
   MAX_CUSTOM_CHARS,
   normalizeText,
   scoreFromAlignment,
@@ -111,7 +111,6 @@ export default function TypingClient({
   const [runBlind, setRunBlind] = useState(false);
   const [peeking, setPeeking] = useState(false);
   const [peekedThisRun, setPeekedThisRun] = useState(false);
-  const [mistakes, setMistakes] = useState(0);
 
   useEffect(() => {
     if (isPublic && !authenticated && mode !== 'free') {
@@ -121,13 +120,11 @@ export default function TypingClient({
       setRunBlind(false);
       setCustomText('');
       setCustomInput('');
-      setMistakes(0);
       setStartedAt(null);
       setFinishedAt(null);
       setClockNow(0);
       setState('idle');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPublic, authenticated, mode]);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -182,7 +179,6 @@ export default function TypingClient({
     setStartedAt(null);
     setFinishedAt(null);
     setClockNow(0);
-    setMistakes(0);
   }, [category, mode, state, freshPassage]);
 
   useEffect(() => {
@@ -195,7 +191,6 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
-    setMistakes(0);
 
     if (mode === 'free') {
       setShowReference(true);
@@ -209,7 +204,6 @@ export default function TypingClient({
 
     requestAnimationFrame(() => inputRef.current?.focus());
     // Category changes are intentionally handled separately.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, dictationId, customText, customBlind]);
 
   useEffect(() => {
@@ -219,7 +213,6 @@ export default function TypingClient({
     setStartedAt(null);
     setFinishedAt(null);
     setClockNow(0);
-    setMistakes(0);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [duration]);
 
@@ -299,7 +292,6 @@ export default function TypingClient({
         block: 'start',
       });
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, dictationId, customText, category]);
 
   useEffect(() => {
@@ -337,7 +329,13 @@ export default function TypingClient({
     (next: string, countFrom: string | null = typedRef.current) => {
       if (!reference) return;
 
-      const value = next.slice(0, reference.length + MAX_EXTRA_CHARS);
+      // Clamp to MAX_ALIGN_CHARS so align() never throws on
+      // cap-length references (holding a key past the cap would
+      // otherwise white-screen the page).
+      const value = next.slice(
+        0,
+        Math.min(reference.length + MAX_EXTRA_CHARS, MAX_ALIGN_CHARS)
+      );
       startIfIdle();
 
       if (countFrom !== null && value.length > countFrom.length) {
@@ -348,7 +346,6 @@ export default function TypingClient({
         }
 
         if (added > 0) {
-          setMistakes((count) => count + added);
         }
       }
 
@@ -393,7 +390,6 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
-    setMistakes(0);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
@@ -479,7 +475,17 @@ export default function TypingClient({
   }, [startedAt, finishedAt, clockNow]);
 
   const elapsedSec = Math.floor(elapsedMs / 1000);
-  const alignment = useMemo(() => align(reference, typed), [reference, typed]);
+  // align() throws RangeError if inputs exceed MAX_ALIGN_CHARS or
+  // the DP budget. The clamp in commitTyped prevents this, but
+  // guard anyway so a pathological input degrades to "all wrong"
+  // instead of white-screening the page.
+  const alignment = useMemo(() => {
+    try {
+      return align(reference, typed);
+    } catch {
+      return align(reference, '');
+    }
+  }, [reference, typed]);
 
   const score: ScoreResult = useMemo(
     () => scoreFromAlignment(alignment, elapsedMs),
@@ -503,7 +509,6 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
-    setMistakes(0);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [category, freshPassage]);
 
@@ -524,7 +529,6 @@ export default function TypingClient({
       setPeeking(false);
       peekedRef.current = false;
       setPeekedThisRun(false);
-      setMistakes(0);
       requestAnimationFrame(() => inputRef.current?.focus());
     },
     [isPublic, authenticated, mode]
@@ -541,7 +545,6 @@ export default function TypingClient({
     setFinishedAt(null);
     setClockNow(0);
     setRunBlind(false);
-    setMistakes(0);
   }, []);
 
   const stopPeeking = useCallback(() => {
@@ -564,7 +567,6 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
-    setMistakes(0);
     setDuration(recommendDuration(text));
     requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -587,36 +589,102 @@ export default function TypingClient({
             ? 'Mixed'
             : category;
 
-    addSessionResult({
-      id: crypto.randomUUID(),
-      practice:
-        mode === 'dictation'
-          ? dictation.title
-          : mode === 'custom'
-            ? 'Custom passage'
-            : 'Free typing',
-      category: resultCategory,
-      wpm: score.netWpm,
-      netWpm: score.netWpm,
-      rawWpm: score.rawWpm,
-      accuracy: score.accuracy,
-      completion: score.completion,
-      correctWords: score.words.correct,
-      incorrectWords: score.words.incorrect,
-      missedWords: score.words.missed,
-      extraWords: score.words.extra,
-      totalWords: score.words.total,
-      correctPunct: score.punctuation.correct,
-      incorrectPunct: score.punctuation.incorrect,
-      missedPunct: score.punctuation.missed,
-      extraPunct: score.punctuation.extra,
-      totalPunct: score.punctuation.total,
-      scored: score.scored,
-      duration: formatClock(elapsedMs / 1000),
-      date: new Date().toISOString().slice(0, 10),
-      mode,
-      counted: runBlind && score.scored,
-    });
+    // ── Server-side re-scoring ──────────────────────────
+    // POST to /api/attempts. The server re-runs the scoring
+    // engine and returns the authoritative score. If the API
+    // is unreachable (offline, guest mode), fall back to the
+    // local score so the UI still works.
+    const submitToServer = async () => {
+      try {
+        const res = await fetch('/api/attempts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            typed,
+            customText: reference,
+            elapsedMs,
+            clientWpm: score.netWpm,
+            clientAccuracy: score.accuracy,
+            durationSetting: duration,
+            completed: true,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // Use the server score for the local record.
+          addSessionResult({
+            id: data.attemptId ?? crypto.randomUUID(),
+            practice:
+              mode === 'dictation'
+                ? dictation.title
+                : mode === 'custom'
+                  ? 'Custom passage'
+                  : 'Free typing',
+            category: resultCategory,
+            wpm: data.score.netWpm,
+            netWpm: data.score.netWpm,
+            rawWpm: data.score.rawWpm,
+            accuracy: data.score.accuracy,
+            completion: data.score.completion,
+            correctWords: data.score.words.correct,
+            incorrectWords: data.score.words.incorrect,
+            missedWords: data.score.words.missed,
+            extraWords: data.score.words.extra,
+            totalWords: data.score.words.total,
+            correctPunct: data.score.punctuation.correct,
+            incorrectPunct: data.score.punctuation.incorrect,
+            missedPunct: data.score.punctuation.missed,
+            extraPunct: data.score.punctuation.extra,
+            totalPunct: data.score.punctuation.total,
+            scored: data.score.scored,
+            duration: formatClock(elapsedMs / 1000),
+            date: new Date().toISOString().slice(0, 10),
+            mode,
+            counted: runBlind && data.score.scored,
+          });
+          return;
+        }
+      } catch {
+        // API unreachable — fall through to local score.
+      }
+
+      // Fallback: local score (guest mode or offline).
+      addSessionResult({
+        id: crypto.randomUUID(),
+        practice:
+          mode === 'dictation'
+            ? dictation.title
+            : mode === 'custom'
+              ? 'Custom passage'
+              : 'Free typing',
+        category: resultCategory,
+        wpm: score.netWpm,
+        netWpm: score.netWpm,
+        rawWpm: score.rawWpm,
+        accuracy: score.accuracy,
+        completion: score.completion,
+        correctWords: score.words.correct,
+        incorrectWords: score.words.incorrect,
+        missedWords: score.words.missed,
+        extraWords: score.words.extra,
+        totalWords: score.words.total,
+        correctPunct: score.punctuation.correct,
+        incorrectPunct: score.punctuation.incorrect,
+        missedPunct: score.punctuation.missed,
+        extraPunct: score.punctuation.extra,
+        totalPunct: score.punctuation.total,
+        scored: score.scored,
+        duration: formatClock(elapsedMs / 1000),
+        date: new Date().toISOString().slice(0, 10),
+        mode,
+        counted: runBlind && score.scored,
+      });
+    };
+
+    submitToServer();
+    // typed and duration are captured in the closure when state
+    // becomes 'complete' — they don't need to trigger re-runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     state,
     reference,

@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider = "cockroachdb"
+  provider = "postgresql"
 }
 
 //
@@ -14,8 +14,8 @@ datasource db {
 //
 
 enum UserRole {
-  STUDENT
-  ADMIN
+  student
+  admin
 }
 
 enum StudentStatus {
@@ -52,14 +52,12 @@ enum AttemptStatus {
   EVALUATED
 }
 
+// Mirrors the scoring engine exactly: a token is wrong
+// (substituted), missed (deleted), or extra (inserted).
 enum EvaluationErrorType {
   MISSING
   EXTRA
   SUBSTITUTION
-  SPELLING
-  PUNCTUATION
-  CASING
-  WHITESPACE
 }
 
 enum FeeStatus {
@@ -85,11 +83,10 @@ enum TypingTestStatus {
 // ============================================================
 // BETTER AUTH USER
 // ============================================================
-// Better Auth will own the authentication lifecycle.
-// We keep the application role here because authorization is
-// application-level, not something the browser gets to decide.
-// Better Auth's CLI will later generate/verify its complete
-// auth schema (User/Session/Account/Verification).
+// Better Auth owns the authentication lifecycle. `role` is kept
+// here because authorization is application-level. `banned` /
+// `banReason` power the admin lockout (Better Auth admin plugin).
+// Table is mapped to "user" to match Better Auth's expectations.
 //
 
 model User {
@@ -98,28 +95,59 @@ model User {
   email         String   @unique
   emailVerified Boolean  @default(false)
   image         String?
-  role          UserRole @default(STUDENT)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  role          UserRole @default(student)
+
+  // Admin lockout (Better Auth admin plugin).
+  banned     Boolean  @default(false)
+  banReason  String?
+  banExpires DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   studentProfile StudentProfile?
 
   createdDictations Dictation[] @relation("DictationCreatedBy")
 
-  attempts Attempt[]
-
   createdTypingTests TypingTest[] @relation("TypingTestCreatedBy")
 
-  typingAttempts TypingAttempt[]
-
-  fees Fee[] @relation("FeeStudent")
+  fees Fee[] @relation("FeeRecordedBy")
 
   announcements Announcement[] @relation("AnnouncementCreatedBy")
 
   createdSchedules Schedule[] @relation("ScheduleCreatedBy")
 
-  sessions Session[]
-  accounts Account[]
+  sessions     Session[]
+  accounts     Account[]
+  loginAttempts LoginAttempt[]
+
+  @@map("user")
+}
+
+//
+// ============================================================
+// LOGIN AUDIT LOG
+// ============================================================
+// Every sign-in attempt (success or failure) is recorded so the
+// admin has full visibility: who, when, from where, and whether
+// it worked. Written by the auth hooks in lib/auth.ts.
+//
+
+model LoginAttempt {
+  id        String  @id @default(uuid())
+  email     String
+  userId    String?
+  user      User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  success   Boolean
+  ipAddress String?
+  userAgent String?
+  reason    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([userId])
+  @@index([createdAt])
 }
 
 //
@@ -143,6 +171,8 @@ model StudentProfile {
   assignments Assignment[]
 
   attempts Attempt[]
+
+  typingAttempts TypingAttempt[]
 
   fees Fee[]
 
@@ -174,8 +204,7 @@ model Batch {
 // ============================================================
 // DICTATIONS
 // ============================================================
-// Audio NEVER lives here.
-// audioObjectKey points to the private Cloudflare R2 object.
+// Audio is hosted on YouTube (youtubeId). No R2 object storage.
 //
 
 model Dictation {
@@ -186,8 +215,8 @@ model Dictation {
 
   referenceTranscript String
 
-  audioObjectKey  String?
-  durationSeconds Int?
+  youtubeId         String?
+  durationSeconds   Int?
 
   createdById String
   createdBy   User   @relation("DictationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -214,8 +243,6 @@ model Dictation {
 // BATCH   -> batchId populated
 // Application/server validation must enforce that exactly one
 // target is supplied.
-// We intentionally do not expose client-side authorization as
-// the source of truth.
 //
 
 model Assignment {
@@ -252,6 +279,7 @@ model Assignment {
 // ============================================================
 // DICTATION ATTEMPTS
 // ============================================================
+// A student is reached through their StudentProfile (single link).
 //
 
 model Attempt {
@@ -276,8 +304,6 @@ model Attempt {
   evaluation EvaluationResult?
 
   errors EvaluationError[]
-  user   User?             @relation(fields: [userId], references: [id])
-  userId String?
 
   @@index([assignmentId])
   @@index([studentId, createdAt])
@@ -288,6 +314,9 @@ model Attempt {
 // ============================================================
 // EVALUATION
 // ============================================================
+// Mirrors the scoring engine output: items accuracy (words +
+// punctuation), completion, net/raw WPM, and wrong/missed/extra
+// counts split by words and punctuation.
 //
 
 model EvaluationResult {
@@ -296,28 +325,33 @@ model EvaluationResult {
   attemptId String  @unique
   attempt   Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
 
-  overallAccuracy   Float
-  wordAccuracy      Float
-  characterAccuracy Float
+  accuracy   Float // exact items (words + punctuation) / evaluated items
+  completion Float // 0-100, coverage of the reference
+  netWpm     Float
+  rawWpm     Float
+  scored     Boolean @default(true)
 
   expectedWordCount Int
   typedWordCount    Int
 
-  correctCount               Int
-  missingCount               Int
-  extraCount                 Int
-  substitutionCount          Int
-  spellingErrorCount         Int
-  punctuationDifferenceCount Int
+  correctCount Int
+  wrongCount   Int
+  missedCount  Int
+  extraCount   Int
 
-  correctCharacterCount   Int
-  incorrectCharacterCount Int
+  correctWordCount Int
+  wrongWordCount   Int
+  missedWordCount  Int
+  extraWordCount   Int
 
-  wpm Float
+  correctPunctCount Int
+  wrongPunctCount   Int
+  missedPunctCount  Int
+  extraPunctCount   Int
 
   createdAt DateTime @default(now())
 
-  @@index([overallAccuracy])
+  @@index([accuracy])
   @@index([createdAt])
 }
 
@@ -372,11 +406,12 @@ model TypingTest {
 model TypingAttempt {
   id String @id @default(uuid())
 
-  typingTestId String
-  typingTest   TypingTest @relation(fields: [typingTestId], references: [id], onDelete: Restrict)
+  // Nullable for free-typing mode (no specific test assigned).
+  typingTestId String?
+  typingTest   TypingTest? @relation(fields: [typingTestId], references: [id], onDelete: Restrict)
 
   studentId String
-  student   User   @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
 
   typedText String
 
@@ -420,7 +455,7 @@ model Fee {
   updatedAt DateTime @updatedAt
 
   recordedById String?
-  recordedBy   User?   @relation("FeeStudent", fields: [recordedById], references: [id], onDelete: SetNull)
+  recordedBy   User?   @relation("FeeRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
 
   @@index([studentId])
   @@index([status])
@@ -479,16 +514,24 @@ model Announcement {
   @@index([published, createdAt])
 }
 
+//
+// ============================================================
+// BETTER AUTH TABLES
+// ============================================================
+// Managed by Better Auth. Do not edit by hand.
+//
+
 model Session {
   id        String   @id
   expiresAt DateTime
   token     String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  ipAddress String?
-  userAgent String?
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress      String?
+  userAgent      String?
+  impersonatedBy String?
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("session")
@@ -520,8 +563,18 @@ model Verification {
   value      String
   expiresAt  DateTime
   createdAt  DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt  DateTime @updatedAt
 
   @@index([identifier])
   @@map("verification")
 }
+
+model RateLimit {
+  id          String   @id
+  key         String   @unique
+  count       Int
+  lastRequest DateTime
+
+  @@map("rateLimit")
+}
+

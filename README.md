@@ -1,60 +1,74 @@
 # StenoType
 
-A focused typing-practice web app for stenography students. The home page
-**is** the typing test — no marketing, no chrome: a passage is on screen
-immediately, the timer starts on your first keystroke.
+A typing/stenography practice app for students. Built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, Prisma 7, Better Auth, and Neon Postgres.
 
-## Current state (preview build)
+## Quick start
 
-**Works:**
-- Typing-first home page (Monkeytype-style): free practice with category
-  (Legal / Professional / General / Mixed) and duration (15/30/60s) pills
-- Honest scoring — per-character, no cascade; **errors never disappear**
-  when you backspace; 5-char-standard Gross/Net WPM + accuracy
-- Auto-submit when the final word is typed (trailing punctuation optional),
-  Submit button any time, `Tab` restarts, passages are always 50–100 words
-- Custom mode — paste your own text (min 40 chars) via a dedicated dialog;
-  paste is blocked inside the test itself (no cheating)
-- Student area — dictation (blind typing with word-by-word diff), results
-  (session-only, max 5, cleared on refresh), profile
-- Auth — env-based accounts (2 users, no signup), HMAC HttpOnly cookie,
-  4-hour sessions, single active session per account, admin kill-switch
-  (`POST /api/admin/disable-session`), login rate limiting (5 tries / 15 min)
-- `proxy.ts` gates `/student/*` and `/admin/*` server-side
+### Prerequisites
 
-**Deliberately not built yet ("under progress" in the UI):**
-- Database persistence (results are session-only until then)
-- Dictation audio — being rebuilt around YouTube thumbnails + transcripts
-- Admin content management (all admin pages are mock/local-state only)
+- Node.js 22+
+- A [Neon](https://neon.tech) Postgres database (free tier)
 
-## Stack
-
-Next.js 16 (App Router), React 19, Tailwind v4, TypeScript, Zod.
-No ORM connected yet — `prisma/schema.prisma` sketches the future data model.
-
-## Development
+### Setup
 
 ```bash
-pnpm install
-pnpm dev            # http://localhost:3000
-pnpm build          # production build
-pnpm typecheck      # tsc --noEmit
+# 1. Install dependencies (postinstall runs `prisma generate`)
+npm install
+
+# 2. Copy env template and fill in your values
+cp .env.example .env.local
+# Edit .env.local — at minimum set DATABASE_URL, BETTER_AUTH_SECRET,
+# BETTER_AUTH_URL, and the seed account credentials.
+
+# 3. Create the database tables
+npx prisma migrate dev
+
+# 4. Seed the admin + student accounts
+npx prisma db seed
+
+# 5. Start the dev server
+npm run dev
 ```
 
-### Required environment variables (`.env`, gitignored)
+Open [http://localhost:3000](http://localhost:3000) and sign in with the seed accounts from your `.env.local`.
+
+## Environment variables
+
+All secrets live in `.env.local` (gitignored). See `.env.example` for the full list.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | Yes | Neon Postgres connection string |
+| `BETTER_AUTH_SECRET` | Yes | Session signing secret (`openssl rand -base64 32`) |
+| `BETTER_AUTH_URL` | Yes | App URL (`http://localhost:3000` locally) |
+| `RESEND_API_KEY` | Step 7 | Email/OTP (Resend) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Seed only | Initial admin account |
+| `STUDENT_EMAIL` / `STUDENT_PASSWORD` | Seed only | Initial student account |
+| `DEV_ORIGINS` | No | Extra dev-server origins (e.g. LAN IP) |
+
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start the dev server |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript check |
+| `npm test` | Run tests (`tsx --test`) |
+| `npx prisma migrate dev` | Create + apply a migration |
+| `npx prisma db seed` | Seed admin + student accounts |
+
+## Auth
+
+Better Auth with email/password and DB-backed sessions. Single active session per user (a new sign-in revokes others). Every successful sign-in is written to the `LoginAttempt` audit table. Admins can ban users and revoke sessions via the Better Auth admin plugin.
+
+## Project structure
 
 ```
-AUTH_SECRET=<random 32+ bytes>
-ADMIN_EMAIL=<paras' login email>
-ADMIN_PASSWORD=<strong password>
-STUDENT_EMAIL=<abhijeet's login email>
-STUDENT_PASSWORD=<strong password>
+app/            Next.js App Router pages + API routes
+components/     React components (admin, student, typing, ui)
+lib/            Auth, DB, scoring engine, schemas, utilities
+prisma/         Prisma schema, migrations, seed
+tests/          Test files (tsx --test)
 ```
 
-Auth **fails loudly** if any of these are missing — there are no demo
-fallback credentials.
-
-## Deploy
-
-Vercel (native Next.js + Node runtime API routes). Set the env vars above in
-the project settings. Do **not** set `DATABASE_URL` yet.
