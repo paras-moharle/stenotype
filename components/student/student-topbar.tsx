@@ -10,7 +10,7 @@ export function StudentTopbar() {
   const { user, isAuthenticated, signOut } = useAuth();
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 w-full border-b border-border bg-background sm:bg-background/80 sm:backdrop-blur-md">
       <div className="flex h-14 items-center justify-between gap-2 px-4 sm:h-16 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <Logo size="sm" />

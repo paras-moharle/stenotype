@@ -14,6 +14,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/",
+    "test:smoke": "tsx --test tests/auth-http.test.mjs",
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {

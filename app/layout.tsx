@@ -1,5 +1,5 @@
 import './globals.css';
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth-provider';
 
@@ -27,6 +27,19 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Next injects this itself — declaring it here (instead of a raw
+ * <meta> tag) avoids a duplicate tag and lets us add `viewportFit`,
+ * which is required for `env(safe-area-inset-bottom)` to be non-zero
+ * on iPhones with a home indicator.
+ */
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#121110',
+};
+
 export default function RootLayout({
   children,
 }: {
@@ -34,9 +47,6 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </head>
       <body className="font-sans antialiased">
         <AuthProvider>
           <div className="flex min-h-screen flex-col">{children}</div>

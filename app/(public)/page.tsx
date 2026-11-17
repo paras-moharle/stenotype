@@ -1,6 +1,5 @@
-import { headers } from 'next/headers';
 import TypingClient from '@/components/typing/typing-client';
-import { auth } from '@/lib/auth';
+import { getSession } from '@/lib/session';
 
 /**
  * Home = the typing test. The passage is the focus, the timer starts
@@ -11,9 +10,7 @@ import { auth } from '@/lib/auth';
  * The session is checked server-side so there is no client flash.
  */
 export default async function HomePage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getSession();
   const authenticated = Boolean(session?.user);
 
   return (
@@ -22,4 +19,3 @@ export default async function HomePage() {
     </div>
   );
 }
-

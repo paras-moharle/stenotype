@@ -1,34 +1,33 @@
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { auth } from '@/lib/auth';
-import { db } from '@/lib/db';
 import { StudentTopbar } from '@/components/student/student-topbar';
 import { StudentShell } from '@/components/student/student-shell';
+import { getCurrentUser } from '@/lib/session';
 
 /**
  * Server-side session + role gate (Better Auth). Runs on every
  * request, so a revoked or banned session is caught immediately —
  * no stale cached client state. proxy.ts is the first (presence)
  * gate; this is the authoritative one.
+ *
+ * `getCurrentUser` is request-cached, so the page below can reuse the
+ * same session without a second DB round-trip.
+ *
+ * `?denied=1` tells /login "you have a session but it is not allowed
+ * here" — the login page skips its auto-redirect in that case, which
+ * prevents an infinite /login <-> /student/dashboard bounce for
+ * banned users or the wrong role.
  */
 export default async function StudentLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
+  const current = await getCurrentUser();
+  if (!current) {
     redirect('/login');
   }
-
-  const dbUser = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true, banned: true },
-  });
-  if (!dbUser || dbUser.role !== 'student' || dbUser.banned) {
-    redirect('/login');
+  if (current.role !== 'student' || current.banned) {
+    redirect('/login?denied=1');
   }
 
   return (
@@ -38,4 +37,3 @@ export default async function StudentLayout({
     </div>
   );
 }
-

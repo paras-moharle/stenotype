@@ -1,21 +1,36 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../generated/prisma/client';
+import { poolConfig } from './db-config';
 
 // Prisma 7 requires a driver adapter to connect. @prisma/adapter-pg
 // speaks to Neon Postgres over the standard `pg` driver.
-// A single shared instance avoids exhausting DB connections in dev
-// (HMR) and serverless.
+//
+// Pool sizing is not cosmetic — see lib/db-config.ts. An oversized or
+// unbounded pool is what turns a burst of parallel queries into
+// Prisma P2028 transaction timeouts.
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL,
+  ...poolConfig,
 });
 
+// A single shared instance avoids exhausting DB connections in dev
+// (HMR) and across serverless re-evaluations.
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-export const db = globalForPrisma.prisma ?? new PrismaClient({ adapter });
+export const db =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    adapter,
+    // Give interactive transactions more headroom than Prisma's 2s
+    // default so a cold Neon connection cannot turn into a P2028.
+    transactionOptions: {
+      maxWait: 10_000,
+      timeout: 15_000,
+    },
+  });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = db;
-}
-
+// Cache in every environment: re-evaluating this module must never
+// create a second pool.
+globalForPrisma.prisma = db;

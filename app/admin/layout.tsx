@@ -1,33 +1,27 @@
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { auth } from '@/lib/auth';
-import { db } from '@/lib/db';
 import { AdminShell } from '@/components/admin/admin-shell';
+import { getCurrentUser } from '@/lib/session';
 
 /**
  * Server-side session + role gate (Better Auth). Runs on every
  * request, so a revoked or banned session is caught immediately —
  * no stale cached client state. proxy.ts is the first (presence)
  * gate; this is the authoritative one.
+ *
+ * See app/student/layout.tsx for why denied sessions go to
+ * /login?denied=1 instead of /login.
  */
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
+  const current = await getCurrentUser();
+  if (!current) {
     redirect('/login');
   }
-
-  const dbUser = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true, banned: true },
-  });
-  if (!dbUser || dbUser.role !== 'admin' || dbUser.banned) {
-    redirect('/login');
+  if (current.role !== 'admin' || current.banned) {
+    redirect('/login?denied=1');
   }
 
   return (
@@ -36,4 +30,3 @@ export default async function AdminLayout({
     </div>
   );
 }
-

@@ -2,6 +2,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { admin } from 'better-auth/plugins';
 import { db } from './db';
+import { rateLimitConfig } from './auth-config';
 
 // ─────────────────────────────────────────────────────────────
 // Better Auth — email/password + DB sessions + admin plugin.
@@ -52,14 +53,9 @@ export const auth = betterAuth({
     },
   },
 
-  // Explicit rate limiting (Better Auth defaults are too loose
-  // and memory-backed, so they reset per serverless instance).
-  // Storage is the database so limits hold across instances.
-  rateLimit: {
-    window: 60, // 60 seconds
-    max: 100, // 100 requests per window per IP
-    storage: 'database',
-  },
+  // Rate limiting — see lib/auth-config.ts for why storage must stay
+  // 'memory' and why /get-session + /sign-out are exempt.
+  rateLimit: rateLimitConfig,
 
   advanced: {
     ipAddress: {
@@ -85,24 +81,29 @@ export const auth = betterAuth({
           // this user so a shared password cannot be used from
           // two places at once. Guarded so a transient DB failure
           // never turns a successful sign-in into a 500.
-          try {
-            await db.session.deleteMany({
-              where: {
-                userId: session.userId,
-                id: { not: session.id },
-              },
-            });
-          } catch {
-            // If revocation fails, the new session still works;
-            // the next sign-in will retry the cleanup.
-          }
+          //
+          // The revocation and the email lookup are independent, so
+          // run them together — sign-in latency is one round-trip
+          // shorter on a cold connection.
+          const [, user] = await Promise.all([
+            db.session
+              .deleteMany({
+                where: {
+                  userId: session.userId,
+                  id: { not: session.id },
+                },
+              })
+              .catch(() => null),
+            db.user
+              .findUnique({
+                where: { id: session.userId },
+                select: { email: true },
+              })
+              .catch(() => null),
+          ]);
 
           // Audit the successful sign-in.
           try {
-            const user = await db.user.findUnique({
-              where: { id: session.userId },
-              select: { email: true },
-            });
             await db.loginAttempt.create({
               data: {
                 email: user?.email ?? 'unknown',

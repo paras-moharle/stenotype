@@ -45,6 +45,7 @@ export function AdminSidebar({ pathname }: AdminSidebarProps) {
               <Link
                 key={link.href}
                 href={link.href}
+                prefetch={false}
                 className={cn(
                   'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition-all duration-200',
                   isActive

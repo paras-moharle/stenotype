@@ -12,12 +12,30 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // If already signed in, go to the correct dashboard — never back home.
+  //
+  // Exception: the student/admin layouts redirect here with ?denied=1
+  // when the session is valid but the account is banned or has the
+  // wrong role. Auto-redirecting in that case would bounce forever
+  // between /login and the dashboard, so we stop and explain instead.
   useEffect(() => {
-    if (!isLoading && isAuthenticated && user) {
-      window.location.assign(
+    if (isLoading) return;
+
+    const denied =
+      new URLSearchParams(window.location.search).get('denied') === '1';
+
+    if (denied && isAuthenticated) {
+      setNotice(
+        'You are signed in, but this account does not have access to that area.'
+      );
+      return;
+    }
+
+    if (isAuthenticated && user) {
+      window.location.replace(
         user.role === 'admin' ? '/admin' : '/student/dashboard'
       );
     }
@@ -103,6 +121,12 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
+
+            {notice && (
+              <p className="rounded-2xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm text-brand animate-fade-in">
+                {notice}
+              </p>
+            )}
 
             {error && (
               <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive animate-fade-in">

@@ -1,20 +1,15 @@
 'use client';
 
-import { usePathname, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { AdminSidebar } from './admin-sidebar';
 import { AdminMobileNav } from './admin-mobile-nav';
-import { useAuth } from '@/lib/use-auth';
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
 
-  // Don't block navigation - layout handles auth server-side
-
+  // Auth is enforced server-side in app/admin/layout.tsx.
   return (
-    <div className="flex min-h-[calc(100vh-4rem)]">
+    <div className="flex min-h-[calc(100dvh-4rem)]">
       <AdminSidebar pathname={pathname} />
       <div className="flex-1">
         <AdminMobileNav pathname={pathname} />
@@ -25,4 +20,3 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-

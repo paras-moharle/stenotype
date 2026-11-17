@@ -23,7 +23,7 @@ export function Navbar() {
     href === '/' ? pathname === '/' : pathname.startsWith(href);
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-background/90 backdrop-blur-md">
+    <header className="sticky top-0 z-50 w-full border-b border-border bg-background sm:bg-background/90 sm:backdrop-blur-md">
       <nav className="container-page relative flex h-16 items-center justify-between sm:h-20">
         <Logo onClick={() => setMobileOpen(false)} />
 

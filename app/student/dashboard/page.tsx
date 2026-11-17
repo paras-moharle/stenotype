@@ -1,18 +1,16 @@
 import { StudentCta } from '@/components/student/student-header';
 import { StudentGreeting } from '@/components/student/student-greeting';
 import { db } from '@/lib/db';
-import { headers } from 'next/headers';
-import { auth } from '@/lib/auth';
+import { getSession } from '@/lib/session';
 import Link from 'next/link';
 import { Headphones, BarChart3, Keyboard, TrendingUp } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 export default async function StudentDashboardPage() {
-  // Get the current user and their stats.
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  // Request-cached: the layout already resolved this session, so this
+  // call costs no extra DB round-trip.
+  const session = await getSession();
 
   let stats = {
     totalAttempts: 0,
