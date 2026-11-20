@@ -211,7 +211,7 @@ model TypingAttempt {
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
 
   dictationId String?
-  dictation   Dictation? @relation(fields: [dictationId], references: [id], onDelete: Restrict)
+  dictation   Dictation? @relation(fields: [dictationId], references: [id], onDelete: SetNull)
 
   typedText String
 
@@ -219,10 +219,21 @@ model TypingAttempt {
 
   wpm      Float
   accuracy Float
+
+  // Legacy counters. Kept ONLY because the currently deployed build
+  // still selects and inserts them; the live API stores the numbers
+  // below instead. Remove in a follow-up migration once the new build
+  // is live. Defaults let the new API omit them safely.
+  correctCharacters   Int @default(0)
+  incorrectCharacters Int @default(0)
+
+  // Defaults keep the currently deployed build (which does not know
+  // about these columns) able to insert. The live API always supplies
+  // real values.
   /** How much of the dictation was covered, 0-100. */
-  completion   Int
-  wordsCorrect Int
-  wordsTotal   Int
+  completion   Int @default(0)
+  wordsCorrect Int @default(0)
+  wordsTotal   Int @default(0)
 
   completed Boolean @default(false)
 

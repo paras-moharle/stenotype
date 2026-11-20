@@ -83,9 +83,11 @@ CREATE TABLE "TypingAttempt" (
     "elapsedMs" INTEGER NOT NULL,
     "wpm" DOUBLE PRECISION NOT NULL,
     "accuracy" DOUBLE PRECISION NOT NULL,
-    "completion" INTEGER NOT NULL,
-    "wordsCorrect" INTEGER NOT NULL,
-    "wordsTotal" INTEGER NOT NULL,
+    "correctCharacters" INTEGER NOT NULL DEFAULT 0,
+    "incorrectCharacters" INTEGER NOT NULL DEFAULT 0,
+    "completion" INTEGER NOT NULL DEFAULT 0,
+    "wordsCorrect" INTEGER NOT NULL DEFAULT 0,
+    "wordsTotal" INTEGER NOT NULL DEFAULT 0,
     "completed" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -209,7 +211,7 @@ ALTER TABLE "Dictation" ADD CONSTRAINT "Dictation_createdById_fkey" FOREIGN KEY 
 ALTER TABLE "TypingAttempt" ADD CONSTRAINT "TypingAttempt_studentId_fkey" FOREIGN KEY ("studentId") REFERENCES "StudentProfile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "TypingAttempt" ADD CONSTRAINT "TypingAttempt_dictationId_fkey" FOREIGN KEY ("dictationId") REFERENCES "Dictation"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "TypingAttempt" ADD CONSTRAINT "TypingAttempt_dictationId_fkey" FOREIGN KEY ("dictationId") REFERENCES "Dictation"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "session" ADD CONSTRAINT "session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;

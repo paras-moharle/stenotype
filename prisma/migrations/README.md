@@ -39,6 +39,32 @@ Squashing to a single baseline makes the folder, the schema and the
 live database describe the same thing again. The old migration files
 remain in git history if they are ever needed for reference.
 
+## Compatibility with the deployed build
+
+The live site still runs the code from `b304f22`, whose Prisma model
+selects and inserts `correctCharacters` / `incorrectCharacters`, and
+knows nothing about `dictationId`, `completion`, `wordsCorrect` or
+`wordsTotal`. The live database therefore keeps:
+
+- `correctCharacters` / `incorrectCharacters` — legacy counters, with
+  defaults so the new API can omit them.
+- defaults (`0`) on `completion`, `wordsCorrect`, `wordsTotal` — so the
+  deployed build, which omits them, can still insert.
+- `ON DELETE SET NULL` on `dictationId` — the behaviour the deployed
+  build expects when a dictation is deleted.
+
+Verified directly against the live database (inside a rolled-back
+transaction):
+
+```
+deployed-build SELECT  -> OK
+deployed-build INSERT  -> OK
+new-build INSERT       -> OK
+```
+
+These compatibility columns are deliberate debt. Remove them in a
+follow-up migration once the new build is deployed.
+
 ## Rules going forward
 
 1. **Never edit a migration that has been applied.** Add a new one.
