@@ -74,6 +74,41 @@ All secrets live in `.env.local` (gitignored). See `.env.example` for the full l
 | `npx prisma db seed` | Seed admin + student accounts |
 | `npx prisma studio` | Visual database browser (http://localhost:5555) |
 
+## Free-tier posture
+
+Everything is designed to stay inside **Neon Free** and **Vercel Hobby** —
+no paid add-ons, no cron jobs, no image optimisation.
+
+| Resource | Current | Free limit |
+|---|---|---|
+| Database size (`neondb`) | ~9 MB | 0.5 GB |
+| Tables | 10 | — |
+| DB connections per instance | 5 | — |
+| Static pages | `/`, `/about`, `/login`, `/typing` | — |
+
+How that is kept in place:
+
+- **The home page is static.** Guest traffic never invokes a serverless
+  function and never wakes the database.
+- **One session read per page.** Protected layouts resolve it server-side and
+  seed the client, so there is no second `/api/auth/get-session` call.
+- **Dictation metadata is fetched lazily**, only when a signed-in user opens
+  dictation mode.
+- **Small connection pool** (5) with `allowExitOnIdle`, so Neon can suspend
+  between bursts.
+- **Every list is capped** (50 attempts, 100 admin rows) and attempt
+  submissions are rate limited.
+- **No billable services are installed** — no Vercel KV/Blob/Postgres/Edge
+  Config/Analytics, no `vercel.json` cron config.
+- `npm run db:check-sync` plus `tests/free-tier.test.mjs` fail the build if a
+  paid SDK, cron job, image optimisation or oversized pool is introduced.
+
+To check the database footprint at any time:
+
+```sql
+SELECT pg_size_pretty(pg_database_size('neondb'));
+```
+
 ## Deploy to Vercel
 
 ### 1. Set environment variables in Vercel dashboard
