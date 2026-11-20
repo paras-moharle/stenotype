@@ -31,3 +31,28 @@ test('date-time output carries the IST clock time', () => {
 test('string timestamps are accepted', () => {
   assert.equal(formatISTDate('2026-11-20T04:00:00Z'), '20 Nov 2026');
 });
+
+/* ─── Structural guard ───────────────────────────────────── */
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+function walk(dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, out);
+    else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+test('all timestamps are rendered through the IST formatter', () => {
+  // A stray `toLocaleString` uses the viewer's timezone and reintroduces
+  // the inconsistency this module exists to remove.
+  const offenders = [];
+  for (const file of [...walk('app'), ...walk('components')]) {
+    const source = fs.readFileSync(file, 'utf8');
+    if (/toLocale(Date|Time)?String\(/.test(source)) offenders.push(file);
+  }
+  assert.deepEqual(offenders, []);
+});
