@@ -227,13 +227,23 @@ model TypingAttempt {
   correctCharacters   Int @default(0)
   incorrectCharacters Int @default(0)
 
-  // Defaults keep the currently deployed build (which does not know
-  // about these columns) able to insert. The live API always supplies
-  // real values.
+  // Full result breakdown. Every column defaults to 0 so the currently
+  // deployed build (which only knows the two counters above) can still
+  // insert; the API always writes the real numbers.
   /** How much of the dictation was covered, 0-100. */
-  completion   Int @default(0)
-  wordsCorrect Int @default(0)
-  wordsTotal   Int @default(0)
+  completion Int @default(0)
+
+  wordsCorrect   Int @default(0)
+  wordsIncorrect Int @default(0)
+  wordsExtra     Int @default(0)
+  wordsMissed    Int @default(0)
+  wordsTotal     Int @default(0)
+
+  punctuationCorrect   Int @default(0)
+  punctuationIncorrect Int @default(0)
+  punctuationExtra     Int @default(0)
+  punctuationMissed    Int @default(0)
+  punctuationTotal     Int @default(0)
 
   completed Boolean @default(false)
 

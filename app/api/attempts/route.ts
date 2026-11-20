@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { attemptSubmissionSchema } from '@/lib/schemas';
 import { align, scoreFromAlignment } from '@/lib/typing/scoring';
+import { attemptSnapshot } from '@/lib/typing/attempt-snapshot';
 
 /**
  * POST /api/attempts
@@ -95,7 +96,10 @@ export async function POST(request: Request) {
 
   // ── Store the attempt ─────────────────────────────────
   // `completed` is derived, not claimed: it means the passage was
-  // transcribed to the end.
+  // transcribed to the end. The full breakdown comes from one mapper
+  // so the API cannot drift from the schema.
+  const snapshot = attemptSnapshot(score);
+
   const attempt = await db.typingAttempt.create({
     data: {
       studentId: profile.id,
@@ -104,10 +108,8 @@ export async function POST(request: Request) {
       elapsedMs,
       wpm: score.netWpm,
       accuracy: score.accuracy,
-      completion: score.completion,
-      wordsCorrect: score.words.correct,
-      wordsTotal: score.words.total,
       completed: score.completion >= 100,
+      ...snapshot,
     },
   });
 

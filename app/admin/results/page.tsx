@@ -11,7 +11,15 @@ type Attempt = {
   accuracy: number;
   completion: number;
   wordsCorrect: number;
+  wordsIncorrect: number;
+  wordsExtra: number;
+  wordsMissed: number;
   wordsTotal: number;
+  punctuationCorrect: number;
+  punctuationIncorrect: number;
+  punctuationExtra: number;
+  punctuationMissed: number;
+  punctuationTotal: number;
   completed: boolean;
   createdAt: Date;
   dictation: { title: string; category: string } | null;
@@ -38,7 +46,15 @@ export default async function AdminResultsPage() {
       accuracy: true,
       completion: true,
       wordsCorrect: true,
+      wordsIncorrect: true,
+      wordsExtra: true,
+      wordsMissed: true,
       wordsTotal: true,
+      punctuationCorrect: true,
+      punctuationIncorrect: true,
+      punctuationExtra: true,
+      punctuationMissed: true,
+      punctuationTotal: true,
       completed: true,
       createdAt: true,
       dictation: { select: { title: true, category: true } },
@@ -88,7 +104,24 @@ export default async function AdminResultsPage() {
     {
       key: 'words',
       header: 'Words',
-      render: (a: Attempt) => `${a.wordsCorrect}/${a.wordsTotal}`,
+      render: (a: Attempt) => (
+        <span
+          title={`wrong ${a.wordsIncorrect} · missed ${a.wordsMissed} · extra ${a.wordsExtra}`}
+        >
+          {a.wordsCorrect}/{a.wordsTotal}
+        </span>
+      ),
+    },
+    {
+      key: 'punctuation',
+      header: 'Punct.',
+      render: (a: Attempt) => (
+        <span
+          title={`wrong ${a.punctuationIncorrect} · missed ${a.punctuationMissed} · extra ${a.punctuationExtra}`}
+        >
+          {a.punctuationCorrect}/{a.punctuationTotal}
+        </span>
+      ),
     },
     {
       key: 'completion',

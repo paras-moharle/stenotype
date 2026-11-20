@@ -10,7 +10,15 @@ type Attempt = {
   accuracy: number;
   completion: number;
   wordsCorrect: number;
+  wordsIncorrect: number;
+  wordsExtra: number;
+  wordsMissed: number;
   wordsTotal: number;
+  punctuationCorrect: number;
+  punctuationIncorrect: number;
+  punctuationExtra: number;
+  punctuationMissed: number;
+  punctuationTotal: number;
   completed: boolean;
   createdAt: string;
   dictation: { id: string; title: string; category: string } | null;
@@ -106,6 +114,7 @@ export default function StudentResultsPage() {
                   <th className="px-4 py-3 text-left font-medium">WPM</th>
                   <th className="px-4 py-3 text-left font-medium">Accuracy</th>
                   <th className="px-4 py-3 text-left font-medium">Words</th>
+                  <th className="px-4 py-3 text-left font-medium">Punct.</th>
                   <th className="px-4 py-3 text-left font-medium">Completion</th>
                   <th className="px-4 py-3 text-left font-medium">Completed</th>
                 </tr>
@@ -127,8 +136,17 @@ export default function StudentResultsPage() {
                     </td>
                     <td className="px-4 py-3 font-medium">{attempt.wpm}</td>
                     <td className="px-4 py-3">{attempt.accuracy}%</td>
-                    <td className="px-4 py-3 text-green-500">
+                    <td
+                      className="px-4 py-3 text-green-500"
+                      title={`wrong ${attempt.wordsIncorrect} · missed ${attempt.wordsMissed} · extra ${attempt.wordsExtra}`}
+                    >
                       {attempt.wordsCorrect}/{attempt.wordsTotal}
+                    </td>
+                    <td
+                      className="px-4 py-3"
+                      title={`wrong ${attempt.punctuationIncorrect} · missed ${attempt.punctuationMissed} · extra ${attempt.punctuationExtra}`}
+                    >
+                      {attempt.punctuationCorrect}/{attempt.punctuationTotal}
                     </td>
                     <td className="px-4 py-3">{attempt.completion}%</td>
                     <td className="px-4 py-3">

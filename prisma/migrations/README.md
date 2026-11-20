@@ -48,8 +48,9 @@ knows nothing about `dictationId`, `completion`, `wordsCorrect` or
 
 - `correctCharacters` / `incorrectCharacters` — legacy counters, with
   defaults so the new API can omit them.
-- defaults (`0`) on `completion`, `wordsCorrect`, `wordsTotal` — so the
-  deployed build, which omits them, can still insert.
+- defaults (`0`) on the whole result breakdown (`completion`, `words*`,
+  `punctuation*`) — so the deployed build, which omits them, can still
+  insert.
 - `ON DELETE SET NULL` on `dictationId` — the behaviour the deployed
   build expects when a dictation is deleted.
 
@@ -58,9 +59,12 @@ transaction):
 
 ```
 deployed-build SELECT  -> OK
-deployed-build INSERT  -> OK
-new-build INSERT       -> OK
+deployed-build INSERT  -> OK (new columns fall back to 0)
+new-build INSERT       -> OK (full breakdown written, then rolled back)
 ```
+
+The full breakdown is stored by `lib/typing/attempt-snapshot.ts`, which
+maps the engine result to these columns in one place.
 
 These compatibility columns are deliberate debt. Remove them in a
 follow-up migration once the new build is deployed.
