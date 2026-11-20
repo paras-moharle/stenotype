@@ -41,6 +41,12 @@ import {
 } from '@/lib/typing/scoring';
 import { generatePassage, recommendDuration } from '@/lib/passage-generator';
 import { sanitizeForTyping } from '@/lib/sanitize';
+import {
+  acceptsInput,
+  canRequestScore,
+  typedCharCap,
+  usesAnchoredAutoFinish,
+} from '@/lib/typing/mode-rules';
 type TestState = 'idle' | 'running' | 'complete';
 type Duration = 15 | 30 | 60;
 type Category = 'mixed' | 'Legal' | 'Professional' | 'General';
@@ -131,6 +137,11 @@ export default function TypingClient({
   const [runBlind, setRunBlind] = useState(false);
   const [peeking, setPeeking] = useState(false);
   const [peekedThisRun, setPeekedThisRun] = useState(false);
+  // Dictation has no local reference until the server scores it, so the
+  // result panel waits on this flag instead of rendering an empty review.
+  const [awaitingScore, setAwaitingScore] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+  const [scoreRetry, setScoreRetry] = useState(0);
 
   useEffect(() => {
     if (isPublic && !authenticated && mode !== 'free') {
@@ -212,6 +223,10 @@ export default function TypingClient({
     peekedRef.current = false;
     setPeekedThisRun(false);
 
+    // Switching dictation must not keep the transcript fetched for the
+    // previous one — otherwise an earlier review leaks into this run.
+    setDictationTranscript('');
+
     if (mode === 'free') {
       setShowReference(true);
     } else if (mode === 'dictation') {
@@ -278,7 +293,9 @@ export default function TypingClient({
   }, []);
 
   useEffect(() => {
-    if (state !== 'running' || !reference) return;
+    if (state !== 'running' || !usesAnchoredAutoFinish(mode, reference.length)) {
+      return;
+    }
 
     const normalizedTyped = normalizeText(typed);
     if (
@@ -287,7 +304,7 @@ export default function TypingClient({
     ) {
       finish();
     }
-  }, [typed, state, reference, finish]);
+  }, [typed, state, mode, reference, finish]);
 
   const manualSubmit = useCallback(() => {
     if (state === 'running') finish();
@@ -330,7 +347,6 @@ export default function TypingClient({
     });
   }, [state, showModes, showReference]);
 
-  const MAX_EXTRA_CHARS = 40;
   const composingRef = useRef(false);
   const compositionStartRef = useRef('');
 
@@ -346,42 +362,31 @@ export default function TypingClient({
   }, [state]);
 
   const commitTyped = useCallback(
-    (next: string, countFrom: string | null = typedRef.current) => {
-      if (!reference) return;
+    (next: string) => {
+      // Dictation types against a hidden reference — it only needs a
+      // selected dictation, not local text.
+      if (!acceptsInput({ mode, referenceLength: reference.length, dictationId })) {
+        return;
+      }
 
-      // Clamp to MAX_ALIGN_CHARS so align() never throws on
-      // cap-length references (holding a key past the cap would
-      // otherwise white-screen the page).
+      // Clamp to the engine cap so align() never throws and a held key
+      // cannot produce an unscoreable payload.
       const value = next.slice(
         0,
-        Math.min(reference.length + MAX_EXTRA_CHARS, MAX_ALIGN_CHARS)
+        typedCharCap(reference.length, MAX_ALIGN_CHARS)
       );
       startIfIdle();
-
-      if (countFrom !== null && value.length > countFrom.length) {
-        let added = 0;
-
-        for (let i = countFrom.length; i < value.length; i += 1) {
-          if (reference[i] !== value[i]) added += 1;
-        }
-
-        if (added > 0) {
-        }
-      }
 
       typedRef.current = value;
       setTyped(value);
     },
-    [reference, startIfIdle]
+    [mode, reference, dictationId, startIfIdle]
   );
 
   const handleInput = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (state === 'complete' || !reference) return;
+    if (state === 'complete') return;
 
-    commitTyped(
-      event.target.value,
-      composingRef.current ? null : typedRef.current
-    );
+    commitTyped(event.target.value);
   };
 
   const handleCompositionStart = () => {
@@ -393,9 +398,9 @@ export default function TypingClient({
     event: React.CompositionEvent<HTMLInputElement>
   ) => {
     composingRef.current = false;
-    if (state === 'complete' || !reference) return;
+    if (state === 'complete') return;
 
-    commitTyped(event.currentTarget.value, compositionStartRef.current);
+    commitTyped(event.currentTarget.value);
     compositionStartRef.current = '';
   };
 
@@ -410,11 +415,22 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
+    setAwaitingScore(false);
+    setScoreError(null);
+    // A fresh dictation run must be re-scored from the transcript the
+    // server holds, not the one fetched for the previous review.
+    if (mode === 'dictation') setDictationTranscript('');
     requestAnimationFrame(() => inputRef.current?.focus());
-  }, []);
+  }, [mode]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') event.preventDefault();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      // Dictation has no auto-finish (no local reference) and is not
+      // timed, so Enter is the natural way to submit.
+      if (state === 'running') manualSubmit();
+      return;
+    }
 
     if (event.key === 'Tab') {
       event.preventDefault();
@@ -427,7 +443,10 @@ export default function TypingClient({
   };
 
   useEffect(() => {
-    if (state === 'complete' || !reference) return;
+    if (state === 'complete') return;
+    if (!acceptsInput({ mode, referenceLength: reference.length, dictationId })) {
+      return;
+    }
 
     const isEditableTarget = (element: Element | null): boolean => {
       if (!element) return false;
@@ -477,7 +496,7 @@ export default function TypingClient({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [state, reference, commitTyped]);
+  }, [state, mode, reference, dictationId, commitTyped]);
 
   // Mirrors for global keyboard handlers.
   // eslint-disable-next-line react-hooks/refs
@@ -593,28 +612,33 @@ export default function TypingClient({
 
   useEffect(() => {
     if (state !== 'complete') {
-      recordedRef.current = false;
+      if (recordedRef.current) {
+        recordedRef.current = false;
+        setAwaitingScore(false);
+        setScoreError(null);
+      }
       return;
     }
 
-    if (recordedRef.current || !reference) return;
+    if (
+      recordedRef.current ||
+      !canRequestScore({ mode, referenceLength: reference.length, dictationId })
+    ) {
+      return;
+    }
     recordedRef.current = true;
-
-    const resultCategory =
-      mode === 'dictation'
-        ? (dictation.category as 'Legal' | 'Professional' | 'General')
-        : mode === 'custom'
-          ? 'Custom'
-          : category === 'mixed'
-            ? 'Mixed'
-            : category;
 
     // ── Server-side re-scoring ──────────────────────────
     // POST to /api/attempts. The server re-runs the scoring
-    // engine and returns the authoritative score. If the API
-    // is unreachable (offline, guest mode), fall back to the
-    // local score so the UI still works.
+    // engine and returns the authoritative score plus the
+    // reference for the review. Dictation has no local
+    // reference, so this response is what makes review possible.
     const submitToServer = async () => {
+      if (mode === 'dictation') {
+        setAwaitingScore(true);
+        setScoreError(null);
+      }
+
       try {
         const res = await fetch('/api/attempts', {
           method: 'POST',
@@ -632,20 +656,26 @@ export default function TypingClient({
             completed: true,
           }),
         });
+
         if (res.ok) {
           const data = await res.json();
           // Set transcript for review display (sent by server after scoring).
           if (data.reference) {
             setDictationTranscript(data.reference);
           }
-          // Use the server score for the local record.
+          setScoreError(null);
           return;
         }
-      } catch {
-        // API unreachable — fall through to local score.
-      }
 
-      // Fallback: local score (guest mode or offline).
+        const payload = await res.json().catch(() => null);
+        setScoreError(
+          payload?.error ?? 'Could not score this attempt. Please try again.'
+        );
+      } catch {
+        setScoreError('Could not reach the scoring service. Please try again.');
+      } finally {
+        setAwaitingScore(false);
+      }
     };
 
     submitToServer();
@@ -657,10 +687,12 @@ export default function TypingClient({
     reference,
     mode,
     dictation,
+    dictationId,
     category,
     score,
     elapsedMs,
     runBlind,
+    scoreRetry,
   ]);
 
   const isFinished = state === 'complete';
@@ -668,6 +700,11 @@ export default function TypingClient({
   const isPeeking = showModes && peeking && isBlind;
   const isCounted = isFinished && runBlind && score.scored;
   const hasReference = reference.length > 0;
+  const canType = acceptsInput({
+    mode,
+    referenceLength: reference.length,
+    dictationId,
+  });
   const timeDisplay = formatClock(
     timed ? Math.max(0, duration - elapsedSec) : elapsedSec
   );
@@ -1231,12 +1268,14 @@ export default function TypingClient({
         </div>
       )}
 
-      {!hasReference ? (
+      {!canType ? (
         <div className="rounded-2xl border border-dashed border-border bg-surface/40 px-6 py-14 text-center sm:py-20">
           <p className="text-sm text-muted-foreground">
             {mode === 'custom'
               ? 'Paste a passage to start.'
-              : 'No passage available.'}
+              : mode === 'dictation'
+                ? 'Pick a dictation to start.'
+                : 'No passage available.'}
           </p>
           {showModes && mode === 'custom' && (
             <Button
@@ -1287,7 +1326,7 @@ export default function TypingClient({
                     <Eye className="h-3 w-3 text-warning" />
                     Reference preview — typing paused
                   </>
-                ) : isBlind && isFinished && showModes ? (
+                ) : isBlind && isFinished && showModes && hasReference ? (
                   <>
                     <CheckCircle2 className="h-3 w-3 text-brand" />
                     <span className="text-brand">Reference passage</span>
@@ -1332,7 +1371,7 @@ export default function TypingClient({
               onDone={stopPeeking}
               compact={!isPublic}
             />
-          ) : isBlind && isFinished && showModes ? (
+          ) : isBlind && isFinished && showModes && hasReference ? (
             <ReferencePassageReview reference={reference} />
           ) : isBlind ? (
             <BlindTypingDisplay
@@ -1402,7 +1441,7 @@ export default function TypingClient({
         </div>
       )}
 
-      {!hasReference ? null : !isFinished ? (
+      {!canType ? null : !isFinished ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
             {isPeeking
@@ -1471,6 +1510,59 @@ export default function TypingClient({
             onRetry={restart}
             onNewFree={mode === 'free' ? newFreePassage : undefined}
           />
+        </div>
+      )}
+
+      {isFinished && !hasReference && (
+        <div
+          ref={resultRef}
+          role="status"
+          aria-live="polite"
+          className="rounded-2xl border border-border/80 bg-surface/90 p-4 shadow-sm sm:p-6"
+        >
+          {awaitingScore ? (
+            <>
+              <h2 className="text-base font-semibold text-foreground">
+                Scoring your attempt…
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Comparing what you typed with the dictation. The review opens as
+                soon as this finishes.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-base font-semibold text-foreground">
+                Could not score this attempt
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {scoreError ??
+                  'The scoring service did not respond. Your typing is still on screen.'}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  className="gap-1.5 rounded-xl"
+                  onClick={() => {
+                    recordedRef.current = false;
+                    setScoreError(null);
+                    setScoreRetry((count) => count + 1);
+                  }}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Score again
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 rounded-xl"
+                  onClick={restart}
+                >
+                  Start over
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

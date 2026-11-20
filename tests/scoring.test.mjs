@@ -317,3 +317,72 @@ test('extra typed word is red, not a separate state', () => {
   assert.ok(display.slice(12).every((i) => i.state === 'wrong'));
 });
 
+
+/* ─── Contract tests ─────────────────────────────────────── */
+
+test('correct + wrong + missed always equals the reference total', () => {
+  const cases = [
+    ['The cat sat on the mat', 'The cat sat on the mat'],
+    ['The cat sat on the mat', 'The cat'],
+    ['The cat sat on the mat', 'The sat on the mat'],
+    ['The cat sat on the mat', 'The cat sat on the mat now'],
+    ['Hello, world. Goodbye!', 'Hello world Goodbye'],
+    ['one, two, three.', 'one two three'],
+    ['a b c d', 'a b c d.'],
+  ];
+
+  for (const [reference, typed] of cases) {
+    const { words, punctuation, items } = score(reference, typed);
+
+    assert.equal(
+      words.correct + words.incorrect + words.missed,
+      words.total,
+      `words invariant: ref=${reference} typed=${typed}`
+    );
+    assert.equal(
+      punctuation.correct + punctuation.incorrect + punctuation.missed,
+      punctuation.total,
+      `punctuation invariant: ref=${reference} typed=${typed}`
+    );
+    assert.equal(
+      items.correct + items.incorrect + items.missed,
+      items.total,
+      `items invariant: ref=${reference} typed=${typed}`
+    );
+  }
+});
+
+test('omitting punctuation keeps words correct but costs accuracy', () => {
+  // Product decision: accuracy is attempted-only and includes
+  // punctuation as its own item, so a word-perfect run with no
+  // punctuation scores below 100. The words row stays 100% correct.
+  const reference = 'Hello, world. Goodbye!';
+  const typed = 'Hello world Goodbye';
+
+  const s = score(reference, typed);
+
+  assert.equal(s.words.correct, s.words.total);
+  assert.equal(s.words.incorrect, 0);
+  assert.equal(s.punctuation.correct, 0);
+  assert.equal(s.punctuation.missed, 3);
+  assert.equal(s.items.correct, 3);
+  assert.equal(s.alignment.evaluatedItems, 6);
+  assert.equal(s.accuracy, 50);
+});
+
+test('attempted-only accuracy excludes the untouched tail but completion does not', () => {
+  // Product decision (confirmed): accuracy answers "of what you
+  // attempted, how much was right?"; completion answers "how much of
+  // the passage did you cover?". They must never be read as the same
+  // number, which is why the UI shows them separately.
+  const reference = 'The cat sat on the mat';
+  const typed = 'The cat';
+
+  const s = score(reference, typed);
+
+  assert.equal(s.accuracy, 100);
+  assert.ok(s.completion < 100);
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.words.missed, 4);
+  assert.equal(s.alignment.evaluatedItems, 2);
+});
