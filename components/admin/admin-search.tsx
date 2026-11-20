@@ -22,6 +22,7 @@ export function AdminSearch({
       />
       <input
         type="text"
+        aria-label={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

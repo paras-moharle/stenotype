@@ -133,13 +133,19 @@ export default function LoginPage() {
             </div>
 
             {notice && (
-              <p className="rounded-2xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm text-brand animate-fade-in">
+              <p
+                role="status"
+                className="rounded-2xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm text-brand animate-fade-in"
+              >
                 {notice}
               </p>
             )}
 
             {error && (
-              <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive animate-fade-in">
+              <p
+                role="alert"
+                className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive animate-fade-in"
+              >
                 {error}
               </p>
             )}

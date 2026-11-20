@@ -5,6 +5,7 @@ import { Plus, X, Trash2, Pencil } from 'lucide-react';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
 import { AdminSearch } from '@/components/admin/admin-search';
+import { AdminEmptyState } from '@/components/admin/admin-empty-state';
 import { Button } from '@/components/ui/button';
 
 type Dictation = {
@@ -254,6 +255,29 @@ export default function AdminDictationsPage() {
         <div className="text-center py-8 text-muted-foreground">
           Loading dictations...
         </div>
+      ) : filtered.length === 0 ? (
+        <AdminEmptyState
+          title={query ? 'No matching dictations' : 'No dictations yet'}
+          description={
+            query
+              ? 'Try a different title or transcript.'
+              : 'Add a dictation with its transcript to start practising.'
+          }
+          action={
+            query ? undefined : (
+              <Button
+                onClick={() => {
+                  setEditingId(null);
+                  setForm(blankForm);
+                  setShowForm(true);
+                }}
+                className="rounded-lg"
+              >
+                Upload dictation
+              </Button>
+            )
+          }
+        />
       ) : (
         <AdminTable
           columns={columns}

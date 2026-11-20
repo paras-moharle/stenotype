@@ -5,6 +5,7 @@ import { Plus, X, Ban, CheckCircle, Trash2 } from 'lucide-react';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
 import { AdminSearch } from '@/components/admin/admin-search';
+import { AdminEmptyState } from '@/components/admin/admin-empty-state';
 import { Button } from '@/components/ui/button';
 
 type Student = {
@@ -242,6 +243,22 @@ export default function AdminStudentsPage() {
         <div className="text-center py-8 text-muted-foreground">
           Loading students...
         </div>
+      ) : filtered.length === 0 ? (
+        <AdminEmptyState
+          title={query ? 'No matching students' : 'No students yet'}
+          description={
+            query
+              ? 'Try a different name or email.'
+              : 'Create the first student account with their details.'
+          }
+          action={
+            query ? undefined : (
+              <Button onClick={() => setShowForm(true)} className="rounded-lg">
+                Add student
+              </Button>
+            )
+          }
+        />
       ) : (
         <AdminTable
           columns={columns}
