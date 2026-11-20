@@ -36,37 +36,8 @@ enum DictationStatus {
   ARCHIVED
 }
 
-enum AssignmentTargetType {
-  STUDENT
-}
-
-enum AttemptStatus {
-  IN_PROGRESS
-  SUBMITTED
-  EVALUATED
-}
-
 // Mirrors the scoring engine exactly: a token is wrong
 // (substituted), missed (deleted), or extra (inserted).
-enum EvaluationErrorType {
-  MISSING
-  EXTRA
-  SUBSTITUTION
-}
-
-enum ScheduleStatus {
-  UPCOMING
-  ACTIVE
-  COMPLETED
-  CANCELLED
-}
-
-enum TypingTestStatus {
-  DRAFT
-  PUBLISHED
-  ARCHIVED
-}
-
 //
 // ============================================================
 // BETTER AUTH USER
