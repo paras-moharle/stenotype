@@ -76,15 +76,16 @@ export function typedCharCap(
 }
 
 /**
- * Whether finishing the run should ask the server for an authoritative
- * score. Dictation is scorable from its id; other modes are only
- * scorable while the reference is present.
+ * Whether finishing the run should be recorded.
+ *
+ * Product rule: ONLY dictation results are stored. Free practice and
+ * custom text are local-only, even for a signed-in student, so this is
+ * deliberately narrower than `acceptsInput` — it is not about whether
+ * the mode can be typed, but whether its result may be persisted.
  */
-export function canRequestScore({
+export function persistsAttempt({
   mode,
-  referenceLength,
   dictationId,
-}: InputAvailability): boolean {
-  if (mode === 'dictation') return Boolean(dictationId);
-  return referenceLength > 0;
+}: Pick<InputAvailability, 'mode' | 'dictationId'>): boolean {
+  return mode === 'dictation' && Boolean(dictationId);
 }

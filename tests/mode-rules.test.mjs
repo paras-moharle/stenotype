@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   acceptsInput,
-  canRequestScore,
+  persistsAttempt,
   hasLocalReference,
   MAX_EXTRA_CHARS,
   typedCharCap,
@@ -80,20 +80,17 @@ test('typed-character cap never exceeds the engine limit', () => {
   );
 });
 
-test('dictation can request a score from its id alone', () => {
+test('only dictation with a selected dictation is persisted', () => {
   assert.equal(
-    canRequestScore({ mode: 'dictation', referenceLength: 0, dictationId: 'abc' }),
+    persistsAttempt({ mode: 'dictation', dictationId: 'abc' }),
     true
   );
-  assert.equal(
-    canRequestScore({ mode: 'dictation', referenceLength: 0, dictationId: '' }),
-    false
-  );
+  assert.equal(persistsAttempt({ mode: 'dictation', dictationId: '' }), false);
 });
 
-test('other modes need a reference before asking for a score', () => {
-  assert.equal(canRequestScore({ mode: 'free', referenceLength: 0 }), false);
-  assert.equal(canRequestScore({ mode: 'free', referenceLength: 12 }), true);
-  assert.equal(canRequestScore({ mode: 'custom', referenceLength: 0 }), false);
-  assert.equal(canRequestScore({ mode: 'custom', referenceLength: 12 }), true);
+test('free and custom are never persisted, even when signed in', () => {
+  // Product rule: only dictation results are stored. A free or custom
+  // run must never reach the attempts API, whatever the reference is.
+  assert.equal(persistsAttempt({ mode: 'free' }), false);
+  assert.equal(persistsAttempt({ mode: 'custom' }), false);
 });

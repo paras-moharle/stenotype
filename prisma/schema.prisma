@@ -88,10 +88,10 @@ model User {
   // Admin lockout (Better Auth admin plugin).
   banned     Boolean  @default(false)
   banReason  String?
-  banExpires DateTime?
+  banExpires DateTime? @db.Timestamptz(3)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
 
   studentProfile StudentProfile?
 
@@ -127,7 +127,7 @@ model LoginAttempt {
   userAgent String?
   reason    String?
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @db.Timestamptz(3) @default(now())
 
   @@index([email])
   @@index([userId])
@@ -154,8 +154,8 @@ model StudentProfile {
   typingAttempts TypingAttempt[]
 
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
 
   @@index([status])
 }
@@ -181,11 +181,11 @@ model Dictation {
   createdById String
   createdBy   User   @relation("DictationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
+  typingAttempts TypingAttempt[]
 
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  publishedAt DateTime?
+  createdAt   DateTime @db.Timestamptz(3)  @default(now())
+  updatedAt   DateTime @db.Timestamptz(3)  @updatedAt
+  publishedAt DateTime? @db.Timestamptz(3)
 
   @@index([status])
   @@index([category])
@@ -226,16 +226,21 @@ model Dictation {
 // ============================================================
 // TYPING SUITE
 // ============================================================
+// Only dictation attempts are persisted. Free practice and custom
+// text are local-only by product decision, so every stored row must
+// point at the dictation it was scored against. `dictationId` stays
+// nullable in the database only so this migration is additive; the
+// API never writes a row without it.
 //
-
 
 model TypingAttempt {
   id String @id @default(uuid())
 
-  // Nullable for free-typing mode (no specific test assigned).
-
   studentId String
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  dictationId String?
+  dictation   Dictation? @relation(fields: [dictationId], references: [id], onDelete: Restrict)
 
   typedText String
 
@@ -243,15 +248,17 @@ model TypingAttempt {
 
   wpm      Float
   accuracy Float
-
-  correctCharacters   Int
-  incorrectCharacters Int
+  /** How much of the dictation was covered, 0-100. */
+  completion   Int
+  wordsCorrect Int
+  wordsTotal   Int
 
   completed Boolean @default(false)
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @db.Timestamptz(3) @default(now())
 
   @@index([studentId, createdAt])
+  @@index([dictationId])
 }
 
 //
@@ -283,10 +290,10 @@ model TypingAttempt {
 
 model Session {
   id        String   @id
-  expiresAt DateTime
+  expiresAt DateTime @db.Timestamptz(3)
   token     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
   ipAddress      String?
   userAgent      String?
   impersonatedBy String?
@@ -306,12 +313,12 @@ model Account {
   accessToken           String?
   refreshToken          String?
   idToken               String?
-  accessTokenExpiresAt  DateTime?
-  refreshTokenExpiresAt DateTime?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
   scope                 String?
   password              String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  createdAt             DateTime @db.Timestamptz(3)  @default(now())
+  updatedAt             DateTime @db.Timestamptz(3)  @updatedAt
 
   @@index([userId])
   @@map("account")
@@ -321,9 +328,9 @@ model Verification {
   id         String   @id
   identifier String
   value      String
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  expiresAt  DateTime @db.Timestamptz(3)
+  createdAt  DateTime @db.Timestamptz(3) @default(now())
+  updatedAt  DateTime @db.Timestamptz(3) @updatedAt
 
   @@index([identifier])
   @@map("verification")

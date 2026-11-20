@@ -1,17 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { formatISTDateTime } from '@/lib/datetime';
 import { StudentHeader } from '@/components/student/student-header';
-import { TrendingUp } from 'lucide-react';
 
 type Attempt = {
   id: string;
   wpm: number;
   accuracy: number;
-  correctCharacters: number;
-  incorrectCharacters: number;
+  completion: number;
+  wordsCorrect: number;
+  wordsTotal: number;
   completed: boolean;
   createdAt: string;
+  dictation: { id: string; title: string; category: string } | null;
 };
 
 export default function StudentResultsPage() {
@@ -75,7 +77,9 @@ export default function StudentResultsPage() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-lg border border-border p-4">
                 <div className="text-2xl font-bold">{stats.total}</div>
-                <div className="text-sm text-muted-foreground">Total attempts</div>
+                <div className="text-sm text-muted-foreground">
+                  Attempts shown (latest 50)
+                </div>
               </div>
               <div className="rounded-lg border border-border p-4">
                 <div className="text-2xl font-bold">{stats.avgWpm}</div>
@@ -98,10 +102,11 @@ export default function StudentResultsPage() {
               <thead>
                 <tr className="border-b border-border bg-muted/50">
                   <th className="px-4 py-3 text-left font-medium">Date</th>
+                  <th className="px-4 py-3 text-left font-medium">Dictation</th>
                   <th className="px-4 py-3 text-left font-medium">WPM</th>
                   <th className="px-4 py-3 text-left font-medium">Accuracy</th>
-                  <th className="px-4 py-3 text-left font-medium">Correct</th>
-                  <th className="px-4 py-3 text-left font-medium">Incorrect</th>
+                  <th className="px-4 py-3 text-left font-medium">Words</th>
+                  <th className="px-4 py-3 text-left font-medium">Completion</th>
                   <th className="px-4 py-3 text-left font-medium">Completed</th>
                 </tr>
               </thead>
@@ -112,22 +117,20 @@ export default function StudentResultsPage() {
                     className="border-b border-border last:border-0"
                   >
                     <td className="px-4 py-3">
-                      {new Date(attempt.createdAt).toLocaleString('en-IN', {
-                        timeZone: 'Asia/Kolkata',
-                        day: 'numeric',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                      {formatISTDateTime(attempt.createdAt)}
+                    </td>
+                    <td className="px-4 py-3">
+                      {attempt.dictation?.title ?? '—'}
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        {attempt.dictation?.category ?? ''}
+                      </span>
                     </td>
                     <td className="px-4 py-3 font-medium">{attempt.wpm}</td>
                     <td className="px-4 py-3">{attempt.accuracy}%</td>
                     <td className="px-4 py-3 text-green-500">
-                      {attempt.correctCharacters}
+                      {attempt.wordsCorrect}/{attempt.wordsTotal}
                     </td>
-                    <td className="px-4 py-3 text-red-500">
-                      {attempt.incorrectCharacters}
-                    </td>
+                    <td className="px-4 py-3">{attempt.completion}%</td>
                     <td className="px-4 py-3">
                       {attempt.completed ? 'Yes' : 'No'}
                     </td>
@@ -136,6 +139,10 @@ export default function StudentResultsPage() {
               </tbody>
             </table>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Only dictation attempts are saved. Free practice and custom text
+            stay on your device.
+          </p>
         </>
       )}
     </div>

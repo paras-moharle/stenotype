@@ -6,8 +6,12 @@ import { db } from '@/lib/db';
 /**
  * GET /api/student/attempts
  *
- * Student-only: get own typing attempts.
+ * The signed-in student's own dictation attempts, newest first.
  * Query params: ?dictationId=... (optional filter)
+ *
+ * Every stored attempt belongs to a dictation; rows without one are
+ * legacy free/custom attempts from before persistence was restricted,
+ * and are excluded so the history only ever shows dictation results.
  */
 export async function GET(request: Request) {
   const session = await auth.api.getSession({
@@ -33,7 +37,13 @@ export async function GET(request: Request) {
   const attempts = await db.typingAttempt.findMany({
     where: {
       studentId: profile.id,
-      ...(dictationId ? { typingTestId: dictationId } : {}),
+      // Only dictation attempts are real results.
+      dictationId: dictationId ?? { not: null },
+    },
+    include: {
+      dictation: {
+        select: { id: true, title: true, category: true },
+      },
     },
     orderBy: { createdAt: 'desc' },
     take: 50,
@@ -41,4 +51,3 @@ export async function GET(request: Request) {
 
   return NextResponse.json({ attempts });
 }
-

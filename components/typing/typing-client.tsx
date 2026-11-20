@@ -44,7 +44,7 @@ import { generatePassage, recommendDuration } from '@/lib/passage-generator';
 import { sanitizeForTyping } from '@/lib/sanitize';
 import {
   acceptsInput,
-  canRequestScore,
+  persistsAttempt,
   typedCharCap,
   usesAnchoredAutoFinish,
 } from '@/lib/typing/mode-rules';
@@ -632,38 +632,28 @@ export default function TypingClient({
 
     if (
       recordedRef.current ||
-      !canRequestScore({ mode, referenceLength: reference.length, dictationId })
+      !persistsAttempt({ mode, dictationId })
     ) {
       return;
     }
     recordedRef.current = true;
 
-    // ── Server-side re-scoring ──────────────────────────
-    // POST to /api/attempts. The server re-runs the scoring
-    // engine and returns the authoritative score plus the
-    // reference for the review. Dictation has no local
-    // reference, so this response is what makes review possible.
+    // ── Server-side scoring (dictation only) ────────────
+    // Only dictation results are stored, so this runs for dictation
+    // alone. The server owns the score, completion and attempt id;
+    // the client sends only what it typed and how long it took.
     const submitToServer = async () => {
-      if (mode === 'dictation') {
-        setAwaitingScore(true);
-        setScoreError(null);
-      }
+      setAwaitingScore(true);
+      setScoreError(null);
 
       try {
         const res = await fetch('/api/attempts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            passageId: dictationId,
             typed,
-            // For dictation mode, send the ID (server fetches transcript).
-            // For other modes, send the reference text directly.
-            passageId: mode === 'dictation' ? dictationId : undefined,
-            customText: mode !== 'dictation' ? reference : undefined,
             elapsedMs,
-            clientWpm: score.netWpm,
-            clientAccuracy: score.accuracy,
-            durationSetting: duration,
-            completed: true,
           }),
         });
 
@@ -1530,7 +1520,6 @@ export default function TypingClient({
         <div ref={resultRef}>
           <CompletionPanel
             score={score}
-            reference={reference}
             elapsedSec={elapsedSec}
             mode={mode}
             counted={isCounted}
@@ -2075,7 +2064,6 @@ function BlindConfirmDialog({
 
 function CompletionPanel({
   score,
-  reference,
   elapsedSec,
   mode,
   counted,
@@ -2087,7 +2075,6 @@ function CompletionPanel({
   onNewFree,
 }: {
   score: ScoreResult;
-  reference: string;
   elapsedSec: number;
   mode: Mode;
   counted: boolean;

@@ -5,11 +5,13 @@ A typing/stenography practice app for students. Built with Next.js 16, React 19,
 ## Features
 
 - **Typing practice** — Free typing, custom paste, and blind dictation modes
+- **Dictation-only results** — Only dictation attempts are saved; free practice and
+  custom text stay in the browser
 - **Server-side scoring** — Results computed on the server, never trusted from client
 - **Dictation management** — Admin uploads YouTube dictations with transcripts
-- **Student tracking** — Fees, batches, and progress monitoring
+- **Student tracking** — Per-dictation attempt history and progress stats
 - **Secure auth** — Better Auth with single-session enforcement and login audit
-- **Admin controls** — Ban users, revoke sessions, view login history
+- **Admin controls** — Manage students and dictations, ban users, revoke sessions
 
 ## Quick start
 

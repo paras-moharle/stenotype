@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { formatISTDate } from '@/lib/datetime';
 import Link from 'next/link';
 import {
   Youtube,
@@ -296,11 +297,7 @@ export default function StudentDictationsPage() {
                       </div>
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {new Date(attempt.createdAt).toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
+                      {formatISTDate(attempt.createdAt)}
                     </div>
                   </div>
                 ))}

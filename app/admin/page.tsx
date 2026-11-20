@@ -1,6 +1,7 @@
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminStat } from '@/components/admin/admin-stat';
 import { db } from '@/lib/db';
+import { formatISTDateTime } from '@/lib/datetime';
 import Link from 'next/link';
 import { Activity } from 'lucide-react';
 
@@ -18,11 +19,13 @@ export default async function AdminDashboardPage() {
     db.studentProfile.count(),
     db.studentProfile.count({ where: { status: 'ACTIVE' } }),
     db.dictation.count({ where: { status: 'PUBLISHED' } }),
-    db.typingAttempt.count(),
+    db.typingAttempt.count({ where: { dictationId: { not: null } } }),
     db.typingAttempt.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
+      where: { dictationId: { not: null } },
       include: {
+        dictation: { select: { title: true } },
         student: {
           include: {
             user: {
@@ -67,13 +70,8 @@ export default async function AdminDashboardPage() {
                       {attempt.student.user.name}
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {new Date(attempt.createdAt).toLocaleString('en-IN', {
-                        timeZone: 'Asia/Kolkata',
-                        day: 'numeric',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                      {attempt.dictation?.title ?? 'Dictation'} ·{' '}
+                      {formatISTDateTime(attempt.createdAt)}
                     </div>
                   </div>
                 </div>

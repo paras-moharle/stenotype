@@ -628,3 +628,28 @@ test('an empty attempt marks the first character as current', () => {
   assert.equal(chars[0].state, 'current');
   assert.ok(chars.slice(1).every((c) => c.state === 'untyped'));
 });
+
+/* ─── Stored result numbers ──────────────────────────────── */
+
+test('character matches are not word accuracy (the "112 correct chars" trap)', () => {
+  // A run typed without spaces matches most characters positionally
+  // while scoring almost zero word accuracy. The stored result must
+  // therefore use word/completion numbers, not char matches.
+  const reference =
+    'The court shall proceed with the examination of the witness in accordance with the provisions of law.';
+  const typed = reference.replace(/\s+/g, '');
+
+  const s = score(reference, typed, 30_000);
+
+  assert.ok(s.correct > 50, `char matches should be high, got ${s.correct}`);
+  assert.ok(s.accuracy < 10, `word accuracy should be low, got ${s.accuracy}`);
+  assert.ok(s.netWpm < 10, `net WPM should be low, got ${s.netWpm}`);
+  assert.ok(s.words.correct < s.words.total);
+  assert.ok(s.completion < 100);
+  // The trap in one line: dozens of "correct characters", almost no
+  // correct words. These two numbers must never be shown as if related.
+  assert.ok(
+    s.correct > s.words.correct * 5,
+    `char matches ${s.correct} vs correct words ${s.words.correct}`
+  );
+});

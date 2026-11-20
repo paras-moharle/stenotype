@@ -2,27 +2,25 @@ import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { sessionSubmissionSchema } from '@/lib/schemas';
+import { attemptSubmissionSchema } from '@/lib/schemas';
 import { align, scoreFromAlignment } from '@/lib/typing/scoring';
 
 /**
  * POST /api/attempts
  *
- * Server-side re-scoring endpoint. The client sends only the raw
- * typed text, the reference text (or passage ID), and timing —
- * the server runs the scoring engine and stores the result.
- * Client-computed scores are never trusted.
+ * Server-side scoring for a dictation attempt.
  *
- * Body (validated by sessionSubmissionSchema):
+ * Only dictation results are persisted. Free practice and custom text
+ * stay in the browser, so a submission MUST name a published dictation
+ * — there is no `customText` escape hatch. The client sends only what
+ * it produced (typed text + elapsed time); the server owns the score,
+ * the completion flag and the attempt id.
+ *
+ * Body (validated by attemptSubmissionSchema):
  * {
- *   passageId?: string,      // ID of a TypingTest (if applicable)
- *   customText?: string,     // Deprecated — custom text no longer accepted as reference
- *   typed: string,           // What the student typed
- *   elapsedMs: number,       // Time taken in milliseconds
- *   clientWpm: number,       // Ignored (server re-computes)
- *   clientAccuracy: number,  // Ignored (server re-computes)
- *   durationSetting: 15|30|60,
- *   completed: boolean,
+ *   passageId: string,   // published dictation id
+ *   typed: string,       // exactly what the student typed
+ *   elapsedMs: number,   // first keystroke -> submit
  * }
  */
 export async function POST(request: Request) {
@@ -47,7 +45,7 @@ export async function POST(request: Request) {
 
   // ── Validate input ────────────────────────────────────
   const body = await request.json().catch(() => null);
-  const parsed = sessionSubmissionSchema.safeParse(body);
+  const parsed = attemptSubmissionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: 'Invalid submission', details: parsed.error.flatten() },
@@ -55,41 +53,40 @@ export async function POST(request: Request) {
     );
   }
 
-  const { typed, elapsedMs, passageId, customText, completed } =
-    parsed.data;
+  const { typed, elapsedMs, passageId } = parsed.data;
 
-  // ── Resolve reference text ────────────────────────────
-  // Transcripts are fetched server-side only. The client never
-  // receives the reference text before scoring.
-  let reference: string | null = null;
-
-  if (passageId) {
-    const dictation = await db.dictation.findUnique({
-      where: { id: passageId },
-      select: { referenceTranscript: true, status: true },
-    });
-    if (dictation?.status === 'PUBLISHED') {
-      reference = dictation.referenceTranscript;
-    }
-  }
-
-  if (!reference) {
+  if (typed.trim().length === 0) {
     return NextResponse.json(
-      { error: 'Reference text not found' },
+      { error: 'Nothing was typed — this attempt was not recorded' },
       { status: 400 }
     );
   }
 
-  // ── Server-side re-scoring ────────────────────────────
-  // The engine is the single source of truth. Client scores
-  // are ignored entirely.
+  // ── Resolve the dictation ─────────────────────────────
+  // The transcript is fetched server-side only. The client never
+  // receives the reference text before scoring.
+  const dictation = await db.dictation.findUnique({
+    where: { id: passageId },
+    select: { id: true, referenceTranscript: true, status: true },
+  });
+
+  if (!dictation || dictation.status !== 'PUBLISHED') {
+    return NextResponse.json(
+      { error: 'Dictation not found' },
+      { status: 404 }
+    );
+  }
+
+  const reference = dictation.referenceTranscript;
+
+  // ── Server-side scoring ───────────────────────────────
+  // The engine is the single source of truth.
   let score;
   try {
     const alignment = align(reference, typed);
     score = scoreFromAlignment(alignment, elapsedMs);
-  } catch (err) {
-    // align() throws RangeError on oversized inputs or DP
-    // budget exceeded. Return a clean error, not a 500.
+  } catch {
+    // align() throws RangeError when input exceeds MAX_ALIGN_CHARS.
     return NextResponse.json(
       { error: 'Input too large to score' },
       { status: 400 }
@@ -97,26 +94,30 @@ export async function POST(request: Request) {
   }
 
   // ── Store the attempt ─────────────────────────────────
+  // `completed` is derived, not claimed: it means the passage was
+  // transcribed to the end.
   const attempt = await db.typingAttempt.create({
     data: {
       studentId: profile.id,
+      dictationId: dictation.id,
       typedText: typed,
       elapsedMs,
       wpm: score.netWpm,
       accuracy: score.accuracy,
-      correctCharacters: score.correct,
-      incorrectCharacters: score.errors,
-      completed,
+      completion: score.completion,
+      wordsCorrect: score.words.correct,
+      wordsTotal: score.words.total,
+      completed: score.completion >= 100,
     },
   });
 
   // ── Return the server-computed score ──────────────────
-  // The client displays THIS, not its own computation.
-  // The reference text is included for the review display
-  // (shown only after completion, not during typing).
+  // The client displays THIS, not its own computation. The reference
+  // is included for the review display (only after scoring).
   return NextResponse.json({
     attemptId: attempt.id,
-    reference, // For review display — sent only after scoring.
+    reference,
+    completed: attempt.completed,
     score: {
       accuracy: score.accuracy,
       completion: score.completion,
@@ -140,4 +141,3 @@ export async function POST(request: Request) {
     },
   });
 }
-

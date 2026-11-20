@@ -1,6 +1,7 @@
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
 import { db } from '@/lib/db';
+import { formatISTDateTime } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,10 +9,12 @@ type Attempt = {
   id: string;
   wpm: number;
   accuracy: number;
-  correctCharacters: number;
-  incorrectCharacters: number;
+  completion: number;
+  wordsCorrect: number;
+  wordsTotal: number;
   completed: boolean;
   createdAt: Date;
+  dictation: { title: string; category: string } | null;
   student: {
     user: {
       name: string;
@@ -24,7 +27,12 @@ export default async function AdminResultsPage() {
   const attempts = await db.typingAttempt.findMany({
     take: 100,
     orderBy: { createdAt: 'desc' },
+    where: {
+      // Results are dictation-only; legacy rows are excluded.
+      dictationId: { not: null },
+    },
     include: {
+      dictation: { select: { title: true, category: true } },
       student: {
         include: {
           user: {
@@ -49,6 +57,18 @@ export default async function AdminResultsPage() {
       ),
     },
     {
+      key: 'dictation',
+      header: 'Dictation',
+      render: (a: Attempt) => (
+        <div>
+          <div className="font-medium">{a.dictation?.title ?? '—'}</div>
+          <div className="text-xs text-muted-foreground">
+            {a.dictation?.category ?? ''}
+          </div>
+        </div>
+      ),
+    },
+    {
       key: 'wpm',
       header: 'WPM',
       render: (a: Attempt) => a.wpm,
@@ -59,14 +79,14 @@ export default async function AdminResultsPage() {
       render: (a: Attempt) => `${a.accuracy}%`,
     },
     {
-      key: 'correct',
-      header: 'Correct',
-      render: (a: Attempt) => a.correctCharacters,
+      key: 'words',
+      header: 'Words',
+      render: (a: Attempt) => `${a.wordsCorrect}/${a.wordsTotal}`,
     },
     {
-      key: 'incorrect',
-      header: 'Incorrect',
-      render: (a: Attempt) => a.incorrectCharacters,
+      key: 'completion',
+      header: 'Completion',
+      render: (a: Attempt) => `${a.completion}%`,
     },
     {
       key: 'completed',
@@ -77,13 +97,7 @@ export default async function AdminResultsPage() {
       key: 'date',
       header: 'Date',
       render: (a: Attempt) =>
-        new Date(a.createdAt).toLocaleString('en-IN', {
-          timeZone: 'Asia/Kolkata',
-          day: 'numeric',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
+        formatISTDateTime(a.createdAt),
     },
   ];
 

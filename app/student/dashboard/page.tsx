@@ -1,7 +1,7 @@
-import { StudentCta } from '@/components/student/student-header';
 import { StudentGreeting } from '@/components/student/student-greeting';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/session';
+import { formatISTDate } from '@/lib/datetime';
 import Link from 'next/link';
 import { Headphones, BarChart3, Keyboard, TrendingUp } from 'lucide-react';
 
@@ -23,6 +23,7 @@ export default async function StudentDashboardPage() {
     wpm: number;
     accuracy: number;
     createdAt: Date;
+    dictation: { title: string } | null;
   }[] = [];
   let availableDictations: {
     id: string;
@@ -37,11 +38,18 @@ export default async function StudentDashboardPage() {
     });
 
     if (profile) {
+      const attemptWhere = {
+        studentId: profile.id,
+        // Results are dictation-only; legacy free/custom rows are hidden.
+        dictationId: { not: null },
+      } as const;
+
       const [attempts, dictations] = await Promise.all([
         db.typingAttempt.findMany({
-          where: { studentId: profile.id },
+          where: attemptWhere,
           orderBy: { createdAt: 'desc' },
           take: 5,
+          include: { dictation: { select: { title: true } } },
         }),
         db.dictation.findMany({
           where: { status: 'PUBLISHED' },
@@ -61,7 +69,7 @@ export default async function StudentDashboardPage() {
 
       if (attempts.length > 0) {
         const aggregates = await db.typingAttempt.aggregate({
-          where: { studentId: profile.id },
+          where: attemptWhere,
           _count: { _all: true },
           _avg: { wpm: true, accuracy: true },
           _max: { wpm: true },
@@ -180,14 +188,12 @@ export default async function StudentDashboardPage() {
                     <div className="font-medium">{attempt.wpm} WPM</div>
                     <div className="text-sm text-muted-foreground">
                       {attempt.accuracy}% accuracy
+                      {attempt.dictation ? ` · ${attempt.dictation.title}` : ''}
                     </div>
                   </div>
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  {new Date(attempt.createdAt).toLocaleDateString('en-IN', {
-                    day: 'numeric',
-                    month: 'short',
-                  })}
+                  {formatISTDate(attempt.createdAt)}
                 </div>
               </div>
             ))}
