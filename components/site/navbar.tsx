@@ -17,7 +17,7 @@ const navLinks = [
 export function Navbar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { user, isAuthenticated, signOut } = useAuth();
+  const { user, isAuthenticated, isLoading, signOut } = useAuth();
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -64,7 +64,12 @@ export function Navbar() {
             </Link>
           )}
 
-          {isAuthenticated ? (
+          {isLoading ? (
+            <span
+              className="h-9 w-20 animate-pulse rounded-xl bg-surface"
+              aria-hidden="true"
+            />
+          ) : isAuthenticated ? (
             <div className="flex items-center gap-2 sm:gap-3">
               <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-2 py-1.5 sm:px-3">
                 <User
@@ -153,7 +158,12 @@ export function Navbar() {
               </Link>
             )}
 
-            {isAuthenticated ? (
+            {isLoading ? (
+            <span
+              className="h-9 w-20 animate-pulse rounded-xl bg-surface"
+              aria-hidden="true"
+            />
+          ) : isAuthenticated ? (
               <button
                 type="button"
                 onClick={() => {

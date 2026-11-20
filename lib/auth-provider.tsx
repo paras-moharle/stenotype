@@ -39,15 +39,29 @@ const SIGNED_OUT_KEY = 'stenotype:signed-out-at';
 const SIGNED_OUT_TTL_MS = 10_000;
 
 /**
- * Fetches /api/auth/get-session ONCE for the whole app and shares the
- * result via context. Mounted at the root layout, so navigating between
- * public pages (About) and protected areas (Practice) never refetches —
- * this is what stops the student layout from flashing its
- * "Checking your session…" spinner on every navigation.
+ * Shares the signed-in user across a route area.
+ *
+ * Protected layouts pass `initialUser` from their server-side session,
+ * so signing in already costs one session read — the client does not
+ * fetch `/api/auth/get-session` a second time just to paint the header,
+ * and there is no "Sign in" flash before the real name appears.
+ *
+ * Public pages mount it without a seed and fetch once on navigation.
  */
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+export function AuthProvider({
+  children,
+  initialUser,
+}: {
+  children: ReactNode;
+  /**
+   * Server-provided user. `null` means "definitely signed out" and also
+   * skips the fetch. Omit it to let the provider fetch.
+   */
+  initialUser?: AppUser | null;
+}) {
+  const seeded = initialUser !== undefined;
+  const [user, setUser] = useState<AppUser | null>(initialUser ?? null);
+  const [isLoading, setIsLoading] = useState(!seeded);
 
   const refresh = useCallback(async () => {
     try {
@@ -88,8 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (seeded) return;
     refresh();
-  }, [refresh]);
+  }, [seeded, refresh]);
 
   // Sign out in one tab → drop the user in every other tab.
   useEffect(() => {
@@ -161,10 +176,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * the user straight back to their dashboard.
    */
   const signOut = useCallback(async () => {
-    // Clear the UI immediately; the redirect happens once the server
-    // has had its say.
-    setUser(null);
-
     const post = (url: string) =>
       fetch(url, {
         method: 'POST',
@@ -174,20 +185,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({}),
       });
 
-    try {
-      const res = await post('/api/auth/sign-out');
-      if (!res.ok) {
-        // Fallback: our own route calls auth.api.signOut() with the
-        // incoming cookies and forwards its Set-Cookie headers.
-        await post('/api/logout');
-      }
-    } catch {
+    const attempt = async (url: string) => {
       try {
-        await post('/api/logout');
+        const res = await post(url);
+        return res.ok;
       } catch {
-        /* offline — nothing more we can do */
+        return false;
       }
+    };
+
+    const signedOut =
+      (await attempt('/api/auth/sign-out')) || (await attempt('/api/logout'));
+
+    if (!signedOut) {
+      // Do NOT pretend the session ended. The cookie is HttpOnly, so a
+      // live session would silently sign the user straight back in and
+      // look like "sign out does nothing".
+      window.location.replace('/login?signout=failed');
+      return;
     }
+
+    setUser(null);
 
     try {
       localStorage.setItem(SIGNED_OUT_KEY, String(Date.now()));

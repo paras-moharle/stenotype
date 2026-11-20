@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { AdminShell } from '@/components/admin/admin-shell';
 import { getCurrentUser } from '@/lib/session';
+import { AuthProvider } from '@/lib/auth-provider';
 
 /**
  * Server-side session + role gate (Better Auth). Runs on every
@@ -25,8 +26,17 @@ export default async function AdminLayout({
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <AdminShell>{children}</AdminShell>
-    </div>
+    <AuthProvider
+      initialUser={{
+        id: current.id,
+        name: current.name,
+        email: current.email,
+        role: 'admin',
+      }}
+    >
+      <div className="flex min-h-screen flex-col">
+        <AdminShell>{children}</AdminShell>
+      </div>
+    </AuthProvider>
   );
 }

@@ -24,8 +24,18 @@ export default function LoginPage() {
   useEffect(() => {
     if (isLoading) return;
 
-    const denied =
-      new URLSearchParams(window.location.search).get('denied') === '1';
+    const params = new URLSearchParams(window.location.search);
+    const denied = params.get('denied') === '1';
+    const signOutFailed = params.get('signout') === 'failed';
+
+    if (signOutFailed) {
+      // The session cookie is still alive, so auto-redirecting would
+      // silently sign the user back in. Explain instead.
+      setNotice(
+        "We couldn't sign you out — your session is still active. Please try again."
+      );
+      return;
+    }
 
     if (denied && isAuthenticated) {
       setNotice(

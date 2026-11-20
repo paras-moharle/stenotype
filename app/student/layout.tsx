@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { StudentTopbar } from '@/components/student/student-topbar';
 import { StudentShell } from '@/components/student/student-shell';
 import { getCurrentUser } from '@/lib/session';
+import { AuthProvider } from '@/lib/auth-provider';
 
 /**
  * Server-side session + role gate (Better Auth). Runs on every
@@ -31,9 +32,20 @@ export default async function StudentLayout({
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <StudentTopbar />
-      <StudentShell>{children}</StudentShell>
-    </div>
+    <AuthProvider
+      // Already resolved on the server: no second session fetch, and no
+      // "Sign in" flash before the real name paints.
+      initialUser={{
+        id: current.id,
+        name: current.name,
+        email: current.email,
+        role: 'student',
+      }}
+    >
+      <div className="flex min-h-screen flex-col">
+        <StudentTopbar />
+        <StudentShell>{children}</StudentShell>
+      </div>
+    </AuthProvider>
   );
 }

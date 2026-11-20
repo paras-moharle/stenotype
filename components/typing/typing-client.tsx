@@ -94,25 +94,37 @@ export default function TypingClient({
     durationSeconds: number | null;
   };
   const [dictations, setDictations] = useState<DictationMeta[]>([]);
+  const [dictationsState, setDictationsState] = useState<
+    'idle' | 'loading' | 'ready' | 'error'
+  >('idle');
   const [dictationId, setDictationId] = useState(initialDictationId ?? '');
   const [dictationTranscript, setDictationTranscript] = useState('');
 
-  // Fetch dictations from API on mount.
+  // Dictation metadata is fetched only when dictation is actually
+  // opened. It used to fire on every visit — including free practice and
+  // signed-out guests, where the request can only return 401.
   useEffect(() => {
+    if (mode !== 'dictation') {
+      // Allow a retry next time the mode is entered.
+      if (dictationsState === 'error') setDictationsState('idle');
+      return;
+    }
+    if (isPublic && !authenticated) return;
+    if (dictationsState !== 'idle') return;
+
+    setDictationsState('loading');
+
     fetch('/api/dictations')
-      .then((res) => (res.ok ? res.json() : { dictations: [] }))
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('failed'))))
       .then((data) => {
         setDictations(data.dictations);
-        // Pick a default without reading a stale dictationId in this
-        // mount-only effect.
         if (data.dictations.length > 0) {
           setDictationId((current) => current || data.dictations[0].id);
         }
+        setDictationsState('ready');
       })
-      .catch(() => {
-        // API unavailable — dictation mode will be empty.
-      });
-  }, []);
+      .catch(() => setDictationsState('error'));
+  }, [mode, isPublic, authenticated, dictationsState]);
 
   const dictation = dictations.find((item) => item.id === dictationId) ?? {
     id: '',
