@@ -179,8 +179,18 @@ export type ScoreResult = {
   alignment: AlignmentResult;
 };
 
-export const MIN_SCORED_ELAPSED_MS = 1000;
-export const MIN_SCORED_TYPED_CHARS = 5;
+/**
+ * Minimum attempt before WPM is considered meaningful.
+ *
+ * `typed chars / elapsed` is mathematically valid but statistically
+ * useless over a fraction of a second: two words in one second reads
+ * as 108 net WPM with 100% attempted accuracy. The time floor is what
+ * blocks those bursts; the character floor only rejects attempts too
+ * small to be a typing sample at all. Accuracy is still computed below
+ * the floor — only the speed figure is withheld.
+ */
+export const MIN_SCORED_ELAPSED_MS = 3000;
+export const MIN_SCORED_TYPED_CHARS = 10;
 
 /**
  * Hard cap for any reference / typed string fed to align().
@@ -236,7 +246,26 @@ export function countScoredWords(text: string): number {
  * token; insertions and deletions do not shift later exact matches.
  * Prefix/suffix trim anchors the alignment to the start, so typed
  * text matches the earliest occurrence, not a later repeat.
+ *
+ * Substitution cost is kind-aware:
+ *   - identical token            -> 0
+ *   - same kind (word/word or
+ *     punctuation/punctuation)   -> 1
+ *   - different kind             -> 2
+ *
+ * Without the kind penalty, a missing punctuation mark next to a
+ * mistyped word tied with a cross-kind substitution and the DP could
+ * charge the word to the punctuation slot ("dog. Don't" typed as
+ * "dog Dont" reported the period as wrong and "Don't" as missed).
+ * Charging 2 makes "delete the punctuation, substitute the word"
+ * (1 + 1) strictly cheaper than "substitute the punctuation with the
+ * word" (2), which is the attribution a reader expects.
  */
+function tokenSubstitutionCost(referenceToken: Token, typedToken: Token): number {
+  if (referenceToken.text === typedToken.text) return 0;
+  return referenceToken.kind === typedToken.kind ? 1 : 2;
+}
+
 function alignTokens(
   reference: Token[],
   typed: Token[]
@@ -294,8 +323,10 @@ function alignTokens(
         } else if (j === tn) {
           dp[row + j] = rn - i;
         } else {
-          const cost =
-            reference[rStart + i].text === typed[tStart + j].text ? 0 : 1;
+          const cost = tokenSubstitutionCost(
+            reference[rStart + i],
+            typed[tStart + j]
+          );
           const diagonal = dp[(i + 1) * width + (j + 1)] + cost;
           const deletion = dp[(i + 1) * width + j] + 1;
           const insertion = dp[row + j + 1] + 1;
@@ -312,10 +343,12 @@ function alignTokens(
       const here = dp[i * width + j];
 
       if (i < rn && j < tn) {
-        const same =
-          reference[rStart + i].text === typed[tStart + j].text;
+        const refToken = reference[rStart + i];
+        const typedToken = typed[tStart + j];
+        const diagonal = dp[(i + 1) * width + (j + 1)];
 
-        if (same && dp[(i + 1) * width + (j + 1)] === here) {
+        // 1. exact match
+        if (refToken.text === typedToken.text && diagonal === here) {
           ops.push({
             type: 'equal',
             refIndex: rStart + i,
@@ -326,7 +359,11 @@ function alignTokens(
           continue;
         }
 
-        if (dp[(i + 1) * width + (j + 1)] + 1 === here) {
+        // 2. same-kind substitution (cost 1)
+        if (
+          refToken.kind === typedToken.kind &&
+          diagonal + 1 === here
+        ) {
           ops.push({
             type: 'substitute',
             refIndex: rStart + i,
@@ -338,7 +375,34 @@ function alignTokens(
         }
       }
 
+      // 3. delete / insert (cost 1) — preferred over a cross-kind
+      //    substitution so a word is never charged to punctuation.
       if (i < rn && dp[(i + 1) * width + j] + 1 === here) {
+        ops.push({ type: 'delete', refIndex: rStart + i });
+        i += 1;
+        continue;
+      }
+
+      if (j < tn && dp[i * width + j + 1] + 1 === here) {
+        ops.push({ type: 'insert', typedIndex: tStart + j });
+        j += 1;
+        continue;
+      }
+
+      // 4. cross-kind substitution (cost 2) — last resort.
+      if (i < rn && j < tn) {
+        ops.push({
+          type: 'substitute',
+          refIndex: rStart + i,
+          typedIndex: tStart + j,
+        });
+        i += 1;
+        j += 1;
+        continue;
+      }
+
+      // 5. exhausted on one side.
+      if (i < rn) {
         ops.push({ type: 'delete', refIndex: rStart + i });
         i += 1;
         continue;
@@ -873,10 +937,14 @@ export function buildTokenDisplayItems(
     } else if (op.type === 'insert') {
       const typedToken = typedTokens[op.typedIndex];
 
+      // Extras are red like wrong tokens, but tagged 'extra' so the
+      // review can mark them as insertions. Otherwise a reader counts
+      // red tokens and compares them with the table's "Wrong" column,
+      // which counts substitutions only.
       for (let k = 0; k < typedToken.text.length; k += 1) {
         items.push({
           ch: typedToken.text[k],
-          state: 'wrong',
+          state: 'extra',
           typedIndex: typedToken.start + k,
         });
       }
@@ -1000,3 +1068,62 @@ export function formatElapsed(ms: number): string {
   return formatClock(ms / 1000);
 }
 
+
+/**
+ * Reference-side display items for the finished run.
+ *
+ * The live indicator colours the passage positionally (char i vs typed
+ * char i), which is right while typing but disagrees with the result
+ * table: one missing character shifts every colour after it, so the
+ * screen shows a wall of red while the table reports most words
+ * correct. Once the run is finished we colour the reference from the
+ * SAME token alignment the table uses, so a token is green exactly
+ * when it counts as correct, red exactly when it counts as wrong, and
+ * amber exactly when it counts as missed.
+ *
+ * Concatenating the returned items reproduces the reference text
+ * exactly (extras are not part of the reference; they are shown in the
+ * "your typing" block instead).
+ */
+export function buildReferenceDisplayItems(
+  alignment: AlignmentResult
+): DisplayItem[] {
+  const stateByRefIndex = new Map<number, CharState>();
+
+  for (const op of alignment.tokenOps) {
+    if (op.type === 'equal') stateByRefIndex.set(op.refIndex, 'correct');
+    else if (op.type === 'substitute') {
+      stateByRefIndex.set(op.refIndex, 'wrong');
+    } else if (op.type === 'delete') {
+      stateByRefIndex.set(op.refIndex, 'missed');
+    }
+  }
+
+  const items: DisplayItem[] = [];
+  const { refTokens, reference } = alignment;
+
+  refTokens.forEach((token, refIndex) => {
+    // Every reference token is consumed exactly once by tokenOps, so
+    // the fallback is only a safety net.
+    const state: CharState = stateByRefIndex.get(refIndex) ?? 'missed';
+
+    for (let k = 0; k < token.text.length; k += 1) {
+      items.push({
+        ch: token.text[k],
+        state,
+        refIndex: token.start + k,
+      });
+    }
+
+    // Separator space, only when the reference actually has one.
+    if (token.end < reference.length && reference[token.end] === ' ') {
+      items.push({
+        ch: ' ',
+        state: state === 'missed' ? 'missed' : 'correct',
+        refIndex: token.end,
+      });
+    }
+  });
+
+  return items;
+}

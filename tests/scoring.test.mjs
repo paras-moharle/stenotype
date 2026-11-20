@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   align,
+  buildLiveChars,
+  buildReferenceDisplayItems,
   buildTokenDisplayItems,
   computeScore,
   countScoredWords,
@@ -309,12 +311,18 @@ test('missing first letter makes the whole word red, text stays typed', () => {
   assert.ok(display.slice(4).every((i) => i.state === 'correct'));
 });
 
-test('extra typed word is red, not a separate state', () => {
+test('extra typed word is red and tagged extra', () => {
+  // Extras stay red (they are a mistake) but carry their own state so
+  // the review can strike them through. Without the tag, a reader
+  // counting red tokens sees more than the table's "Wrong" column,
+  // which counts substitutions only.
   const alignment = align('The cat sat', 'The cat sat now');
   const display = buildTokenDisplayItems(alignment);
   assert.equal(display.map((item) => item.ch).join(''), 'The cat sat now');
   assert.ok(display.slice(0, 12).every((i) => i.state === 'correct'));
-  assert.ok(display.slice(12).every((i) => i.state === 'wrong'));
+  assert.ok(display.slice(12).every((i) => i.state === 'extra'));
+  assert.equal(alignment.items.extra, 1);
+  assert.equal(alignment.items.incorrect, 0);
 });
 
 
@@ -385,4 +393,238 @@ test('attempted-only accuracy excludes the untouched tail but completion does no
   assert.equal(s.words.correct, 2);
   assert.equal(s.words.missed, 4);
   assert.equal(s.alignment.evaluatedItems, 2);
+});
+
+/* ─── Speed-score floor ──────────────────────────────────── */
+
+test('a burst of a few words does not earn a speed score', () => {
+  // Regression: "The court" typed in 1s used to report 108 net WPM
+  // with 100% attempted accuracy. A speed figure needs a real sample.
+  const reference =
+    'The court shall proceed with the examination of the witness.';
+  const s = score(reference, 'The court', 1_000);
+
+  assert.equal(s.scored, false);
+  assert.equal(s.rawWpm, 0);
+  assert.equal(s.netWpm, 0);
+  // Accuracy is still measured — only the speed figure is withheld.
+  assert.equal(s.accuracy, 100);
+  assert.equal(s.words.correct, 2);
+});
+
+test('the speed floor needs both enough time and enough characters', () => {
+  const reference = 'The court shall proceed with the examination.';
+
+  // Fast enough to clear the character floor, but too quick to trust.
+  const tooFast = score(reference, 'The court shall proceed', 2_000);
+  assert.equal(tooFast.scored, false);
+
+  // Long enough, but too little text typed.
+  const tooShort = score(reference, 'The court', 3_000);
+  assert.equal(tooShort.scored, false);
+
+  // Clears both floors.
+  const scored = score(reference, 'The court shall proceed', 3_000);
+  assert.equal(scored.scored, true);
+  assert.ok(scored.netWpm > 0);
+});
+
+/* ─── Word / punctuation attribution ─────────────────────── */
+
+test('a mistyped word is not charged to the neighbouring punctuation', () => {
+  // Regression: the token DP used a flat substitution cost, so a
+  // missing full stop next to a mistyped word tied with a cross-kind
+  // substitution. "dog. Don't" typed as "dog Dont" reported the
+  // punctuation as wrong and "Don't" as missed.
+  const s = score("dog. Don't stop", 'dog Dont stop');
+
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.words.incorrect, 1); // Don't -> Dont
+  assert.equal(s.words.missed, 0);
+  assert.equal(s.punctuation.incorrect, 0);
+  assert.equal(s.punctuation.missed, 1); // the full stop
+
+  const split = splitMissedNotReached(s.alignment);
+  assert.deepEqual(
+    split.wrong.map((entry) => [entry.expected, entry.actual, entry.tokenKind]),
+    [["Don't", 'Dont', 'word']]
+  );
+  assert.deepEqual(
+    split.missed.map((entry) => [entry.expected, entry.tokenKind]),
+    [['.', 'punct']]
+  );
+});
+
+test('missing punctuation never becomes a word substitution', () => {
+  const s = score("Hello. Don't go.", 'Hello Dont go');
+
+  assert.equal(s.words.incorrect, 1);
+  assert.equal(s.words.missed, 0);
+  assert.equal(s.punctuation.incorrect, 0);
+  assert.equal(s.punctuation.missed, 2);
+});
+
+test('same-kind punctuation substitution is still a wrong token', () => {
+  // Guard against over-correcting: a comma typed as a full stop is
+  // genuinely the wrong punctuation, not a missing + extra pair.
+  const s = score('Hello, world', 'Hello. world');
+
+  assert.equal(s.words.correct, 2);
+  assert.equal(s.punctuation.incorrect, 1);
+  assert.equal(s.punctuation.missed, 0);
+  assert.equal(s.punctuation.extra, 0);
+});
+
+test('review entries and counts describe the same attribution', () => {
+  const cases = [
+    ["dog. Don't stop", 'dog Dont stop'],
+    ['Good evening. The cat sat.', 'Good evening The cat sat'],
+    ['Hello, world', 'Hello. world'],
+    ['The cat sat on the mat', 'The cat sat'],
+  ];
+
+  for (const [reference, typed] of cases) {
+    const s = score(reference, typed);
+    const split = splitMissedNotReached(s.alignment);
+
+    assert.equal(split.wrong.length, s.items.incorrect, reference);
+    assert.equal(
+      split.wrong.filter((entry) => entry.tokenKind === 'word').length,
+      s.words.incorrect,
+      reference
+    );
+    assert.equal(
+      split.wrong.filter((entry) => entry.tokenKind === 'punct').length,
+      s.punctuation.incorrect,
+      reference
+    );
+    assert.equal(
+      split.extra.length,
+      s.items.extra,
+      reference
+    );
+  }
+});
+
+/* ─── Passage colouring agrees with the table ────────────── */
+
+test('finished-passage colouring reproduces the reference exactly', () => {
+  const cases = [
+    ['The cat sat on the mat', 'The cat sat on the mat'],
+    ['The cat sat on the mat', 'The cat'],
+    ['The cat sat on the mat', 'The sat on the mat'],
+    ['The cat sat on the mat', 'The cat sat on the mat now'],
+    ['Hello, world. Goodbye!', 'Hello world Goodbye'],
+    ["dog. Don't stop", 'dog Dont stop'],
+    ['one, two, three.', 'one two three'],
+  ];
+
+  for (const [reference, typed] of cases) {
+    const alignment = align(reference, typed);
+    const items = buildReferenceDisplayItems(alignment);
+
+    assert.equal(
+      items.map((item) => item.ch).join(''),
+      alignment.reference,
+      `reconstruction: ${reference} / ${typed}`
+    );
+  }
+});
+
+test('each coloured token matches the table row it belongs to', () => {
+  const cases = [
+    ['The cat sat on the mat', 'The cat sat on the mat'],
+    ['The cat sat on the mat', 'The cat'],
+    ['The cat sat on the mat', 'The sat on the mat'],
+    ['The cat sat on the mat', 'The cat sat on the mat now'],
+    ['Hello, world. Goodbye!', 'Hello world Goodbye'],
+    ["dog. Don't stop", 'dog Dont stop'],
+    ['Hello, world', 'Hello. world'],
+    ['a b c d', 'a b c d.'],
+  ];
+
+  for (const [reference, typed] of cases) {
+    const alignment = align(reference, typed);
+    const items = buildReferenceDisplayItems(alignment);
+
+    // The first character of a reference token carries that token's
+    // state, so the colours can be counted per token.
+    const tokenStates = alignment.refTokens.map(
+      (token) => items.find((item) => item.refIndex === token.start)?.state
+    );
+
+    assert.equal(
+      tokenStates.filter((state) => state === 'correct').length,
+      alignment.items.correct,
+      `green tokens: ${reference} / ${typed}`
+    );
+    assert.equal(
+      tokenStates.filter((state) => state === 'wrong').length,
+      alignment.items.incorrect,
+      `red tokens: ${reference} / ${typed}`
+    );
+    assert.equal(
+      tokenStates.filter((state) => state === 'missed').length,
+      alignment.items.missed,
+      `amber tokens: ${reference} / ${typed}`
+    );
+    assert.equal(
+      tokenStates.length,
+      alignment.items.total,
+      `token count: ${reference} / ${typed}`
+    );
+  }
+});
+
+test('a wrong word is red as a whole, never half-green', () => {
+  const alignment = align('The tribunal reserved', 'the tribnal reserved');
+  const items = buildReferenceDisplayItems(alignment);
+
+  // "tribnal" is wrong, so the passage shows the expected word fully
+  // red — no partially green token anywhere in the review.
+  const byRef = new Map(items.map((item) => [item.refIndex, item.state]));
+  const expected = alignment.reference;
+
+  for (const token of alignment.refTokens) {
+    const states = new Set();
+    for (let i = token.start; i < token.end; i += 1) {
+      states.add(byRef.get(i));
+    }
+    assert.equal(
+      states.size,
+      1,
+      `token "${token.text}" has mixed states in ${expected}`
+    );
+  }
+});
+
+/* ─── Live indicator position ────────────────────────────── */
+
+test('the current-character indicator sits exactly at the next char', () => {
+  const { chars, extras } = buildLiveChars('abc def', 'abc ');
+  assert.equal(chars.length, 7);
+  assert.equal(chars[4].ch, 'd');
+  assert.equal(chars[4].state, 'current');
+  assert.ok(chars.slice(0, 4).every((c) => c.state === 'correct'));
+  assert.ok(chars.slice(5).every((c) => c.state === 'untyped'));
+  assert.equal(extras, '');
+});
+
+test('the indicator follows the first half-typed character', () => {
+  const { chars } = buildLiveChars('abc', 'ax');
+  assert.equal(chars[0].state, 'correct');
+  assert.equal(chars[1].state, 'wrong');
+  assert.equal(chars[2].state, 'current');
+});
+
+test('typing past the reference shows extras, not a shifted indicator', () => {
+  const { chars, extras } = buildLiveChars('abc', 'abcd');
+  assert.ok(chars.every((c) => c.state === 'correct'));
+  assert.equal(extras, 'd');
+});
+
+test('an empty attempt marks the first character as current', () => {
+  const { chars } = buildLiveChars('abc', '');
+  assert.equal(chars[0].state, 'current');
+  assert.ok(chars.slice(1).every((c) => c.state === 'untyped'));
 });

@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import {
   align,
   buildLiveChars,
+  buildReferenceDisplayItems,
   buildTokenDisplayItems,
   countScoredWords,
   formatClock,
@@ -536,6 +537,15 @@ export default function TypingClient({
     [reference, typed]
   );
 
+  // Once finished, colour the passage from the SAME token alignment as
+  // the result table. The live indicator is positional, so a single
+  // missed character shifts every colour after it and the screen
+  // disagrees with the table.
+  const resultChars = useMemo(
+    () => buildReferenceDisplayItems(score.alignment),
+    [score.alignment]
+  );
+
   const newFreePassage = useCallback(() => {
     setPassage(freshPassage(category));
     setTyped('');
@@ -705,6 +715,12 @@ export default function TypingClient({
     referenceLength: reference.length,
     dictationId,
   });
+  const passageClass = cn(
+    'mx-auto w-full max-w-5xl flex-1 whitespace-pre-wrap break-words font-mono',
+    isPublic
+      ? 'text-2xl leading-[2] sm:text-3xl sm:leading-[2.1]'
+      : 'text-xl leading-[1.8] sm:text-2xl sm:leading-[1.9] lg:text-[1.625rem]'
+  );
   const timeDisplay = formatClock(
     timed ? Math.max(0, duration - elapsedSec) : elapsedSec
   );
@@ -1265,6 +1281,13 @@ export default function TypingClient({
               submit.
             </p>
           )}
+
+          {!isBlind && !isFinished && (
+            <p className="mt-2.5 text-[11px] text-muted-foreground">
+              Accuracy counts the words and punctuation you have attempted;
+              the word counts beside it are separate.
+            </p>
+          )}
         </div>
       )}
 
@@ -1379,15 +1402,23 @@ export default function TypingClient({
               state={state}
               compact={!isPublic}
             />
+          ) : isFinished ? (
+            <div className={passageClass} aria-label="Passage coloured by result">
+              {resultChars.map((item, index) => (
+                <span
+                  key={index}
+                  className={cn(
+                    item.state === 'correct' && 'text-success',
+                    item.state === 'wrong' && 'text-destructive',
+                    item.state === 'missed' && 'text-warning'
+                  )}
+                >
+                  {item.ch}
+                </span>
+              ))}
+            </div>
           ) : (
-            <div
-              className={cn(
-                'mx-auto w-full max-w-5xl flex-1 whitespace-pre-wrap break-words font-mono',
-                isPublic
-                  ? 'text-2xl leading-[2] sm:text-3xl sm:leading-[2.1]'
-                  : 'text-xl leading-[1.8] sm:text-2xl sm:leading-[1.9] lg:text-[1.625rem]'
-              )}
-            >
+            <div className={passageClass}>
               {liveChars.chars.map((char, index) => (
                 <span
                   key={index}
@@ -2068,6 +2099,7 @@ function CompletionPanel({
   onNewFree?: () => void;
 }) {
   const words = score.words;
+  const items = score.items;
   const missedWordCount = words.missed;
   const missedPunctCount = score.punctuation.missed;
 
@@ -2148,13 +2180,28 @@ function CompletionPanel({
       <div className="grid grid-cols-2 gap-3 border-t border-border pt-4 sm:grid-cols-4">
         <ResultStat label="Net WPM" value={score.netWpm} accent={counted} />
         <ResultStat
-          label="Accuracy"
+          label="Attempted accuracy"
           value={`${score.accuracy}%`}
           accent={counted}
         />
         <ResultStat label="Completion" value={`${score.completion}%`} />
         <ResultStat label="Time" value={formatClock(elapsedSec)} />
       </div>
+
+      {/* These two numbers answer different questions, so the
+          denominator for each is spelled out instead of letting a
+          reader compare "words correct" with "accuracy". */}
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <span className="font-medium text-foreground">
+          Attempted accuracy
+        </span>{' '}
+        = {score.items.correct} correct ÷{' '}
+        {score.alignment.evaluatedItems} items you attempted (words +
+        punctuation). <span className="font-medium text-foreground">
+          Completion
+        </span>{' '}
+        = how much of the passage you covered. Case counts.
+      </p>
 
       <div className="border-t border-border pt-3">
         <div className="overflow-hidden rounded-xl border border-border">
@@ -2214,6 +2261,26 @@ function CompletionPanel({
                   </td>
                 </tr>
               )}
+              <tr className="border-t border-border bg-background/60">
+                <td className="px-3 py-2 font-medium text-foreground">
+                  All scored items
+                </td>
+                <td className="px-3 py-2 text-right text-foreground">
+                  {items.total}
+                </td>
+                <td className="px-3 py-2 text-right text-success">
+                  {items.correct}
+                </td>
+                <td className="px-3 py-2 text-right text-destructive">
+                  {items.incorrect}
+                </td>
+                <td className="px-3 py-2 text-right text-muted-foreground">
+                  {items.missed}
+                </td>
+                <td className="px-3 py-2 text-right text-destructive">
+                  {items.extra}
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -2223,14 +2290,15 @@ function CompletionPanel({
       </div>
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Accuracy = correct ÷ evaluated items (words + punctuation). Case
-        counts. Missed includes everything you did not type.
+        Words and punctuation are scored as separate items. &quot;Missed&quot;
+        includes everything you did not type, including the rest of the
+        passage. Only attempted items affect accuracy.
       </p>
 
       {!score.scored && (
         <p className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-          This attempt was too short to score. It needs at least 1 second and 5
-          typed characters.
+          This attempt is too short for a speed score. It needs at least 3
+          seconds and 10 typed characters. Accuracy above is still measured.
         </p>
       )}
 
@@ -2280,7 +2348,7 @@ function CompletionPanel({
                 <LegendSwatch
                   className="bg-destructive/30"
                   borderClass="border-destructive/40"
-                  label="Wrong"
+                  label="Wrong / extra"
                 />
                 <LegendSwatch
                   className="bg-warning/30"
@@ -2375,7 +2443,7 @@ function ReviewBlock({
           Your typing
         </span>
         <span className="text-[10px] text-muted-foreground">
-          Green correct · red wrong
+          Green correct · red wrong or extra · amber missed
         </span>
       </div>
 
@@ -2393,13 +2461,23 @@ function ReviewBlock({
                 );
               }
 
+              // Extras are red like wrong tokens but struck through,
+              // so "how many red tokens" never silently includes
+              // insertions the table reports in its own "Extra" column.
               return (
                 <span
                   key={index}
                   title={
-                    item.expected ? `Expected “${item.expected}”.` : undefined
+                    item.state === 'extra'
+                      ? 'Extra — you typed this but the passage does not have it.'
+                      : item.expected
+                        ? `Expected “${item.expected}”.`
+                        : undefined
                   }
-                  className="text-destructive"
+                  className={cn(
+                    'text-destructive',
+                    item.state === 'extra' && 'line-through'
+                  )}
                 >
                   {displayChar(item.ch)}
                 </span>

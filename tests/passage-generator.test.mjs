@@ -6,6 +6,7 @@ import {
   recommendDuration,
   PASSAGE_BANK,
 } from '../lib/passage-generator.ts';
+import { sanitizeForTyping } from '../lib/sanitize.ts';
 
 const CATEGORIES = ['Legal', 'Professional', 'General'];
 
@@ -112,4 +113,37 @@ test('recommendDuration uses the available duration buckets', () => {
   assert.equal(recommendDuration(Array(60).fill('word').join(' ')), 60);
   assert.equal(recommendDuration(Array(120).fill('word').join(' ')), 60);
   assert.equal(recommendDuration(''), 15);
+});
+
+/* ─── Typeability ────────────────────────────────────────── */
+
+test('every curated passage is typeable on a standard keyboard', () => {
+  // A curated passage containing a character no keyboard can produce
+  // (e.g. an em dash) caps a word-perfect run below 100% and cannot be
+  // pasted around because paste is blocked on the typing input.
+  const allowed = /^[A-Za-z0-9 .,!?;:'"()\-]+$/;
+
+  for (const category of CATEGORIES) {
+    PASSAGE_BANK[category].forEach((passage, index) => {
+      assert.match(
+        passage,
+        allowed,
+        `${category}[${index}] contains a character that cannot be typed`
+      );
+    });
+  }
+});
+
+test('every curated passage survives the custom-text sanitizer unchanged', () => {
+  // The custom-text path runs sanitizeForTyping; a bank passage must
+  // not be rewritten differently from how it is scored.
+  for (const category of CATEGORIES) {
+    PASSAGE_BANK[category].forEach((passage, index) => {
+      assert.equal(
+        sanitizeForTyping(passage),
+        passage,
+        `${category}[${index}] would be altered by sanitizeForTyping`
+      );
+    });
+  }
 });
