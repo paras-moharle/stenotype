@@ -5,7 +5,8 @@ import {
   inspectCustomText,
   MIN_CUSTOM_WORDS,
 } from '../lib/typing/custom-text.ts';
-import { MAX_CUSTOM_CHARS } from '../lib/typing/scoring.ts';
+import { computeScore, MAX_CUSTOM_CHARS } from '../lib/typing/scoring.ts';
+import { persistsAttempt } from '../lib/typing/mode-rules.ts';
 
 /*
  * Custom-text validation is the gate for local practice. It had no
@@ -51,11 +52,17 @@ test('the sanitized text is what the caller would use', () => {
   assert.ok(!check.text.includes('  '));
 });
 
-test('sanitization can change the word count', () => {
-  // A non-breaking hyphen splits a compound, which is a documented
-  // behaviour of the sanitizer and therefore visible here.
+test('sanitization keeps hyphenated compounds as one word', () => {
+  // Non-breaking hyphens are transliterated to "-", so the compound
+  // stays a single scored word instead of splitting into four.
   const check = inspectCustomText('state\u2011of\u2011the\u2011art');
-  assert.equal(check.words, 4);
+  assert.equal(check.words, 1);
+});
+
+test('sanitization can change the word count for a zero-width space', () => {
+  // A zero-width space is a separator; it turns one token into two.
+  const check = inspectCustomText('hello\u200Bworld');
+  assert.equal(check.words, 2);
 });
 
 test('the word count and the applied text come from the same pass', () => {
@@ -65,4 +72,29 @@ test('the word count and the applied text come from the same pass', () => {
   assert.equal(check.words, 10);
   // Applying the check's text must not change the count.
   assert.equal(inspectCustomText(check.text).words, check.words);
+});
+
+/* ─── Custom paste end to end ────────────────────────────── */
+
+test('a messy pasted passage can be typed perfectly after sanitising', () => {
+  const pasted = `“The quick brown fox” jumps over the lazy dog —
+it’s that simple… isn’t it?
+
+Café owners in Straße disagree; 1½ cups later, they don’t care.`;
+
+  const check = inspectCustomText(pasted);
+  assert.equal(check.ok, true);
+
+  // Typing exactly the sanitised text scores 100% on both words and
+  // punctuation — the reference and what the student sees are the same.
+  const score = computeScore(check.text, check.text, 60_000);
+  assert.equal(score.accuracy, 100);
+  assert.equal(score.completion, 100);
+  assert.equal(score.words.correct, score.words.total);
+  assert.equal(score.punctuation.correct, score.punctuation.total);
+  assert.equal(score.words.incorrect + score.words.missed + score.words.extra, 0);
+});
+
+test('custom text is never persisted', () => {
+  assert.equal(persistsAttempt({ mode: 'custom', dictationId: 'abc' }), false);
 });

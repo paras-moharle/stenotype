@@ -76,8 +76,8 @@ export default function StudentDictationsPage() {
   return (
     <div className="space-y-8">
       <StudentHeader
-        title="My Dictations"
-        description="Listen to the audio, then type it blind."
+        title="Dictation library"
+        description="Open a dictation on YouTube, then practise typing it blind."
       />
 
       {error && (

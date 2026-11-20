@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import {
   generatePassage,
-  recommendDuration,
   PASSAGE_BANK,
 } from '../lib/passage-generator.ts';
 import { sanitizeForTyping } from '../lib/sanitize.ts';
@@ -107,13 +106,6 @@ test('invalid target word counts are rejected', () => {
   assert.throws(() => generatePassage({ targetWords: -1 }), RangeError);
 });
 
-test('recommendDuration uses the available duration buckets', () => {
-  assert.equal(recommendDuration('one two three'), 15);
-  assert.equal(recommendDuration(Array(10).fill('word').join(' ')), 30);
-  assert.equal(recommendDuration(Array(60).fill('word').join(' ')), 60);
-  assert.equal(recommendDuration(Array(120).fill('word').join(' ')), 60);
-  assert.equal(recommendDuration(''), 15);
-});
 
 /* ─── Typeability ────────────────────────────────────────── */
 

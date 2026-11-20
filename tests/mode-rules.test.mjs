@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   acceptsInput,
+  countsAsRecorded,
   persistsAttempt,
   MAX_EXTRA_CHARS,
   typedCharCap,
@@ -87,4 +88,34 @@ test('free and custom are never persisted, even when signed in', () => {
   // run must never reach the attempts API, whatever the reference is.
   assert.equal(persistsAttempt({ mode: 'free' }), false);
   assert.equal(persistsAttempt({ mode: 'custom' }), false);
+});
+
+/* ─── "Counted" badge truthfulness ───────────────────────── */
+
+test('only a finished, blind, scored dictation is called counted', () => {
+  const base = {
+    finished: true,
+    blind: true,
+    scored: true,
+    dictationId: 'abc',
+  };
+  assert.equal(countsAsRecorded({ mode: 'dictation', ...base }), true);
+  assert.equal(countsAsRecorded({ mode: 'free', ...base }), false);
+  assert.equal(countsAsRecorded({ mode: 'custom', ...base }), false);
+  assert.equal(
+    countsAsRecorded({ mode: 'dictation', ...base, finished: false }),
+    false
+  );
+  assert.equal(
+    countsAsRecorded({ mode: 'dictation', ...base, blind: false }),
+    false
+  );
+  assert.equal(
+    countsAsRecorded({ mode: 'dictation', ...base, scored: false }),
+    false
+  );
+  assert.equal(
+    countsAsRecorded({ mode: 'dictation', ...base, dictationId: '' }),
+    false
+  );
 });

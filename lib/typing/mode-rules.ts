@@ -84,3 +84,27 @@ export function persistsAttempt({
 }: Pick<InputAvailability, 'mode' | 'dictationId'>): boolean {
   return mode === 'dictation' && Boolean(dictationId);
 }
+
+/**
+ * Whether the finished run should be labelled "counted".
+ *
+ * Blind-mode free/custom runs are still not saved (only dictation is),
+ * so the badge must never claim they were. This used to be true for any
+ * blind run, which told the student their practice was recorded when it
+ * was not.
+ */
+export function countsAsRecorded({
+  mode,
+  dictationId,
+  finished,
+  blind,
+  scored,
+}: Pick<InputAvailability, 'mode' | 'dictationId'> & {
+  finished: boolean;
+  blind: boolean;
+  scored: boolean;
+}): boolean {
+  return (
+    finished && blind && scored && persistsAttempt({ mode, dictationId })
+  );
+}

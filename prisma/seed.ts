@@ -72,7 +72,7 @@ async function main() {
     'student'
   );
 
-  // The student account gets a StudentProfile so attempts, fees,
+  // The student account gets a StudentProfile so attempts and
   // and assignments have somewhere to attach.
   const student = await db.user.findUnique({
     where: { email: studentEmail.trim().toLowerCase() },

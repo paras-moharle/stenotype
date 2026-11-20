@@ -21,7 +21,6 @@ type Student = {
 
   _count: {
     typingAttempts: number;
-    fees: number;
   };
   createdAt: string;
 };
@@ -160,17 +159,28 @@ export default function AdminStudentsPage() {
     {
       key: 'status',
       header: 'Status',
-      render: (s: Student) => (
-        <span
-          className={
-            s.user.banned
-              ? 'text-red-500 font-medium'
-              : 'text-green-500 font-medium'
-          }
-        >
-          {s.user.banned ? 'Blocked' : 'Active'}
-        </span>
-      ),
+      render: (s: Student) => {
+        if (s.user.banned) {
+          return <span className="font-medium text-red-500">Blocked</span>;
+        }
+        const label =
+          s.status === 'SUSPENDED'
+            ? 'Suspended'
+            : s.status === 'INACTIVE'
+              ? 'Inactive'
+              : 'Active';
+        return (
+          <span
+            className={
+              s.status === 'ACTIVE'
+                ? 'font-medium text-green-500'
+                : 'font-medium text-yellow-500'
+            }
+          >
+            {label}
+          </span>
+        );
+      },
     },
     {
       key: 'actions',

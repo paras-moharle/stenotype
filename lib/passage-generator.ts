@@ -187,17 +187,3 @@ export function generatePassage(opts: GenerateOptions = {}): string {
   return drawNonRepeating(`${selectedCategory}:${poolKey}`, pool, rand);
 }
 
-/**
- * Estimate the shortest supported timed-test duration that aims to let
- * a 40-WPM typist use about 60% of the timer. Recommendations are capped
- * at the longest available duration, 60 seconds.
- */
-export function recommendDuration(passage: string): 15 | 30 | 60 {
-  const words = countWords(passage);
-  const estimatedTypingSeconds = (words / 40) * 60;
-  const suggestedSeconds = estimatedTypingSeconds / 0.6;
-
-  if (suggestedSeconds <= 15) return 15;
-  if (suggestedSeconds <= 30) return 30;
-  return 60;
-}

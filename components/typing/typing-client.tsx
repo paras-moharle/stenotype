@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import {
   align,
   buildLiveChars,
+  splitMissedNotReached,
   buildReferenceDisplayItems,
   buildTokenDisplayItems,
   countScoredWords,
@@ -39,13 +40,14 @@ import {
   type ScoreResult,
   type TokenDiffEntry,
 } from '@/lib/typing/scoring';
-import { generatePassage, recommendDuration } from '@/lib/passage-generator';
+import { generatePassage } from '@/lib/passage-generator';
 import {
   inspectCustomText,
   MIN_CUSTOM_WORDS,
 } from '@/lib/typing/custom-text';
 import {
   acceptsInput,
+  countsAsRecorded,
   persistsAttempt,
   typedCharCap,
   usesAnchoredAutoFinish,
@@ -632,7 +634,6 @@ export default function TypingClient({
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
-    setDuration(recommendDuration(check.text));
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
@@ -714,7 +715,15 @@ export default function TypingClient({
   const isFinished = state === 'complete';
   const isBlind = !showReference;
   const isPeeking = showModes && peeking && isBlind;
-  const isCounted = isFinished && runBlind && score.scored;
+  // Only dictation is persisted, so only a blind, scored dictation can
+  // honestly be called "counted".
+  const isCounted = countsAsRecorded({
+    mode,
+    dictationId,
+    finished: isFinished,
+    blind: runBlind,
+    scored: score.scored,
+  });
   const hasReference = reference.length > 0;
   const canType = acceptsInput({
     mode,
@@ -1087,9 +1096,7 @@ export default function TypingClient({
               >
                 {dictations.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.title} —{' '}
-                    
-                    words
+                    {item.title} · {item.category}
                   </option>
                 ))}
               </select>
@@ -1143,7 +1150,9 @@ export default function TypingClient({
                     <Eye className="h-3 w-3" />
                   )}
                   {isBlind
-                    ? 'Blind mode — eligible to count'
+                    ? persistsAttempt({ mode, dictationId })
+                      ? 'Blind mode — eligible to count'
+                      : 'Blind mode — practice only'
                     : 'Reference visible — practice only'}
                 </span>
               )}
@@ -1156,7 +1165,9 @@ export default function TypingClient({
               {isPeeking
                 ? 'Reference preview — typing is paused. Start typing to go blind again; this run will not be counted.'
                 : isBlind
-                  ? 'Blind mode — type from memory. Scored blind runs count when they meet the minimum duration and character thresholds.'
+                  ? persistsAttempt({ mode, dictationId })
+                    ? 'Blind mode — type from memory. Scored blind runs count when they meet the minimum duration and character thresholds.'
+                    : 'Blind mode — type from memory. This practice is not saved; only dictation attempts are.'
                   : 'Type at your own pace — practice run, not counted.'}
             </p>
             {!isFinished && (
@@ -1960,16 +1971,10 @@ function CustomTextDialog({
             {wordCount} {wordCount === 1 ? 'word' : 'words'} · min {MIN_CUSTOM_WORDS} ·{' '}
             {cleaned.length}/{MAX_CUSTOM_CHARS} chars
           </span>
-          {check.tooLong ? (
+          {check.tooLong && (
             <span className="text-destructive">
               Too long — trim to {MAX_CUSTOM_CHARS} characters
             </span>
-          ) : (
-            canStart && (
-              <span className="text-success">
-                ~{recommendDuration(cleaned)}s suggested
-              </span>
-            )
           )}
         </div>
 
@@ -2305,27 +2310,29 @@ function CompletionPanel({
         </p>
       )}
 
-      {isPublic ? (
-        <p className="text-[11px] text-muted-foreground">
-        </p>
-      ) : (
-        <div className="rounded-xl border border-warning/20 bg-warning/[0.045] p-3">
-          <p className="text-xs font-semibold text-warning">
+      {!isPublic &&
+        (mode === 'dictation' ? (
+          // The panel only renders for dictation once the server has
+          // returned the transcript, which means the row was written.
+          <p className="rounded-xl border border-success/20 bg-success/[0.05] px-3 py-2 text-xs text-muted-foreground">
+            Saved to your results.
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            This score is shown for this visit only. Refreshing the page clears
-            it.
+        ) : (
+          <p className="rounded-xl border border-warning/20 bg-warning/[0.045] px-3 py-2 text-xs text-muted-foreground">
+            This score is shown for this visit only — free practice and custom
+            text are not saved.
           </p>
-        </div>
-      )}
+        ))}
 
       {!counted && !isPublic && (
         <p className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-          {peeked
-            ? 'You previewed the reference during this attempt, so this is practice only. Restart to try a clean blind run.'
-            : blind
-              ? 'This blind attempt did not meet the minimum scoring thresholds, so it is not counted.'
-              : 'The passage was visible during this run, so it is practice only. Turn on blind mode to record a scored result.'}
+          {mode !== 'dictation'
+            ? 'Practice only — only dictation attempts are saved to your results.'
+            : peeked
+              ? 'You previewed the reference during this attempt, so this is practice only. Restart to try a clean blind run.'
+              : blind
+                ? 'This blind attempt did not meet the minimum scoring thresholds, so it is not counted.'
+                : 'The passage was visible during this run, so it is practice only. Turn on blind mode to record a scored result.'}
         </p>
       )}
 
@@ -2430,10 +2437,10 @@ function ReviewBlock({
     [alignment]
   );
 
-  // Everything not typed — skipped words and the untouched tail —
-  // is "missed". tokenDiff lists them in passage order.
-  const missedTokens = useMemo(
-    () => alignment.tokenDiff.filter((entry) => entry.kind === 'missed'),
+  // Skipped words are "missed"; the untouched tail was never attempted.
+  // Showing both as "missed" overstated the error, so they are split.
+  const { missed: missedTokens, notReached } = useMemo(
+    () => splitMissedNotReached(alignment),
     [alignment]
   );
 
@@ -2506,6 +2513,14 @@ function ReviewBlock({
               ))}
             </div>
           </div>
+        )}
+
+        {notReached.length > 0 && (
+          <p className="mt-3 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+            {notReached.length} further item
+            {notReached.length === 1 ? '' : 's'} were never reached — the rest
+            of the passage.
+          </p>
         )}
       </div>
     </div>

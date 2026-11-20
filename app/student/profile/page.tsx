@@ -112,7 +112,7 @@ export default function StudentProfilePage() {
           </h2>
           {stats && stats.totalAttempts > 0 ? (
             <div className="mt-4 space-y-3">
-              <StatRow label="Total attempts" value={stats.totalAttempts} />
+              <StatRow label="Attempts (latest 50)" value={stats.totalAttempts} />
               <StatRow label="Average WPM" value={stats.avgWpm} />
               <StatRow label="Average accuracy" value={`${stats.avgAccuracy}%`} />
               <StatRow label="Best WPM" value={stats.bestWpm} />

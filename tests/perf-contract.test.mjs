@@ -53,7 +53,6 @@ test('admin routes share one auth gate', () => {
     'app/api/admin/dictations/[id]/route.ts',
     'app/api/admin/students/route.ts',
     'app/api/admin/students/[id]/route.ts',
-    'app/api/admin/users/route.ts',
     'app/api/admin/users/[id]/ban/route.ts',
     'app/api/admin/login-history/route.ts',
   ];
