@@ -40,10 +40,18 @@ export async function GET(request: Request) {
       // Only dictation attempts are real results.
       dictationId: dictationId ?? { not: null },
     },
-    include: {
-      dictation: {
-        select: { id: true, title: true, category: true },
-      },
+    // Never load `typedText`: it can be ~20 KB per row and no screen
+    // that reads this endpoint displays it.
+    select: {
+      id: true,
+      wpm: true,
+      accuracy: true,
+      completion: true,
+      wordsCorrect: true,
+      wordsTotal: true,
+      completed: true,
+      createdAt: true,
+      dictation: { select: { id: true, title: true, category: true } },
     },
     orderBy: { createdAt: 'desc' },
     take: 50,

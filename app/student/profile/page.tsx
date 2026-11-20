@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { StudentHeader } from '@/components/student/student-header';
-import { Mail, User as UserIcon, Shield, TrendingUp } from 'lucide-react';
+import { Mail, User as UserIcon, Shield } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 
 type Stats = {

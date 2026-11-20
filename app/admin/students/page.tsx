@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Ban, CheckCircle, Trash2, Pencil } from 'lucide-react';
+import { Plus, X, Ban, CheckCircle, Trash2 } from 'lucide-react';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
 import { AdminSearch } from '@/components/admin/admin-search';

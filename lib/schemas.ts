@@ -25,5 +25,3 @@ export const attemptSubmissionSchema = z.object({
   /** Wall-clock time from first keystroke to submit. */
   elapsedMs: z.number().int().nonnegative(),
 });
-
-export type AttemptSubmission = z.infer<typeof attemptSubmissionSchema>;

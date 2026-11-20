@@ -10,7 +10,6 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  History,
   RotateCcw,
   CheckCircle2,
   ArrowRight,
@@ -21,7 +20,6 @@ import {
   Sparkles,
   ClipboardPaste,
   Lock,
-  Info,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -41,7 +39,10 @@ import {
   type TokenDiffEntry,
 } from '@/lib/typing/scoring';
 import { generatePassage, recommendDuration } from '@/lib/passage-generator';
-import { sanitizeForTyping } from '@/lib/sanitize';
+import {
+  inspectCustomText,
+  MIN_CUSTOM_WORDS,
+} from '@/lib/typing/custom-text';
 import {
   acceptsInput,
   persistsAttempt,
@@ -102,9 +103,10 @@ export default function TypingClient({
       .then((res) => (res.ok ? res.json() : { dictations: [] }))
       .then((data) => {
         setDictations(data.dictations);
-        // Set default dictation if none selected.
-        if (!dictationId && data.dictations.length > 0) {
-          setDictationId(data.dictations[0].id);
+        // Pick a default without reading a stale dictationId in this
+        // mount-only effect.
+        if (data.dictations.length > 0) {
+          setDictationId((current) => current || data.dictations[0].id);
         }
       })
       .catch(() => {
@@ -191,7 +193,7 @@ export default function TypingClient({
     }
 
     return passage;
-  }, [mode, dictation, customText, passage, isPublic, authenticated]);
+  }, [mode, dictationTranscript, customText, passage, isPublic, authenticated]);
 
   useEffect(() => {
     if (mode === 'free' && !passage) {
@@ -604,19 +606,17 @@ export default function TypingClient({
   const applyCustom = () => {
     if (isPublic && !authenticated) return;
 
-    const text = sanitizeForTyping(customInput);
-    if (text.length > MAX_CUSTOM_CHARS) return;
-    const words = countScoredWords(text);
-    if (words < 10) return;
+    const check = inspectCustomText(customInput);
+    if (!check.ok) return;
 
-    setCustomText(text);
+    setCustomText(check.text);
     setCustomInput('');
     setShowCustomDialog(false);
     setMode('custom');
     setPeeking(false);
     peekedRef.current = false;
     setPeekedThisRun(false);
-    setDuration(recommendDuration(text));
+    setDuration(recommendDuration(check.text));
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
@@ -1860,10 +1860,10 @@ function CustomTextDialog({
   onApply: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const cleaned = sanitizeForTyping(customInput);
-  const wordCount = countScoredWords(cleaned);
-  const overLimit = cleaned.length > MAX_CUSTOM_CHARS;
-  const canStart = wordCount >= 10 && !overLimit;
+  const check = inspectCustomText(customInput);
+  const cleaned = check.text;
+  const wordCount = check.words;
+  const canStart = check.ok;
 
   useEffect(() => {
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -1941,10 +1941,10 @@ function CustomTextDialog({
 
         <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
           <span>
-            {wordCount} {wordCount === 1 ? 'word' : 'words'} · min 10 ·{' '}
+            {wordCount} {wordCount === 1 ? 'word' : 'words'} · min {MIN_CUSTOM_WORDS} ·{' '}
             {cleaned.length}/{MAX_CUSTOM_CHARS} chars
           </span>
-          {overLimit ? (
+          {check.tooLong ? (
             <span className="text-destructive">
               Too long — trim to {MAX_CUSTOM_CHARS} characters
             </span>

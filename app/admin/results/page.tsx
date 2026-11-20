@@ -31,13 +31,20 @@ export default async function AdminResultsPage() {
       // Results are dictation-only; legacy rows are excluded.
       dictationId: { not: null },
     },
-    include: {
+    // Only the columns the table renders — `typedText` is excluded.
+    select: {
+      id: true,
+      wpm: true,
+      accuracy: true,
+      completion: true,
+      wordsCorrect: true,
+      wordsTotal: true,
+      completed: true,
+      createdAt: true,
       dictation: { select: { title: true, category: true } },
       student: {
-        include: {
-          user: {
-            select: { name: true, email: true },
-          },
+        select: {
+          user: { select: { name: true, email: true } },
         },
       },
     },

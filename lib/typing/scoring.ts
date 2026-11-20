@@ -98,9 +98,6 @@ export type TokenDiffEntry = {
   tokenKind: TokenKind;
 };
 
-/** @deprecated Use TokenDiffEntry. Kept as an alias for compatibility. */
-export type WordDiffEntry = TokenDiffEntry;
-
 export type AlignmentResult = {
   reference: string;
   typed: string;
@@ -127,8 +124,6 @@ export type AlignmentResult = {
   items: TokenStats;
   /** Token-level diffs (words + punctuation). */
   tokenDiff: TokenDiffEntry[];
-  /** @deprecated Use tokenDiff. Kept as an alias. */
-  wordDiff: TokenDiffEntry[];
   /** Reference scored tokens (words + punctuation) with char offsets. */
   refTokens: Token[];
   /** Typed scored tokens with char offsets. */
@@ -141,13 +136,6 @@ export type AlignmentResult = {
    * reference tail is out.
    */
   evaluatedItems: number;
-  /**
-   * Words-only evaluated count (typed words + internal missed words).
-   * Kept for compatibility; accuracy now uses evaluatedItems.
-   */
-  evaluatedWords: number;
-  /** Punctuation-only evaluated count. */
-  evaluatedPunct: number;
 };
 
 export type ScoreResult = {
@@ -643,8 +631,6 @@ export function align(
   // Exception: trailing punctuation after the last typed word is
   // missed (the user finished the words and omitted the punct).
   const internalMisses = new Set<number>();
-  const internalMissedWords = new Set<number>();
-  const internalMissedPunct = new Set<number>();
   let hasTypedTokenAfter = false;
 
   for (let i = tokenOps.length - 1; i >= 0; i -= 1) {
@@ -652,11 +638,6 @@ export function align(
 
     if (op.type === 'delete' && hasTypedTokenAfter) {
       internalMisses.add(op.refIndex);
-      if (refTokens[op.refIndex].kind === 'word') {
-        internalMissedWords.add(op.refIndex);
-      } else {
-        internalMissedPunct.add(op.refIndex);
-      }
     }
 
     if (op.type !== 'delete') {
@@ -693,7 +674,6 @@ export function align(
         refTokens[op.refIndex].kind === 'punct'
       ) {
         internalMisses.add(op.refIndex);
-        internalMissedPunct.add(op.refIndex);
       }
     }
   }
@@ -749,12 +729,6 @@ export function align(
   }
 
   const evaluatedItems = typedTokens.length + internalMisses.size;
-  const evaluatedWords =
-    typedTokens.filter((token) => token.kind === 'word').length +
-    internalMissedWords.size;
-  const evaluatedPunct =
-    typedTokens.filter((token) => token.kind === 'punct').length +
-    internalMissedPunct.size;
 
   return {
     reference,
@@ -772,13 +746,10 @@ export function align(
     punctuation,
     items,
     tokenDiff,
-    wordDiff: tokenDiff,
     refTokens,
     typedTokens,
     tokenOps,
     evaluatedItems,
-    evaluatedWords,
-    evaluatedPunct,
   };
 }
 
@@ -835,41 +806,6 @@ export function splitMissedNotReached(alignment: AlignmentResult): {
   }
 
   return { missed, notReached, wrong, extra };
-}
-
-function itemsFromOps(ops: AlignmentOp[]): DisplayItem[] {
-  return ops.map((op) => {
-    switch (op.type) {
-      case 'equal':
-        return {
-          ch: op.ch,
-          state: 'correct',
-          refIndex: op.refIndex,
-          typedIndex: op.typedIndex,
-        };
-      case 'substitute':
-        return {
-          ch: op.typedCh,
-          state: 'wrong',
-          refIndex: op.refIndex,
-          typedIndex: op.typedIndex,
-          expected: op.refCh,
-        };
-      case 'delete':
-        return { ch: op.ch, state: 'missed', refIndex: op.refIndex };
-      case 'insert':
-        return { ch: op.ch, state: 'extra', typedIndex: op.typedIndex };
-    }
-  });
-}
-
-/**
- * Character-level display items (legacy). Colors come from the
- * character alignment. Prefer buildTokenDisplayItems() for review,
- * which colors from the single token alignment.
- */
-export function buildDisplayItems(alignment: AlignmentResult): DisplayItem[] {
-  return itemsFromOps(alignment.ops);
 }
 
 /**
@@ -1064,9 +1000,6 @@ export function formatClock(totalSeconds: number): string {
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-export function formatElapsed(ms: number): string {
-  return formatClock(ms / 1000);
-}
 
 
 /**

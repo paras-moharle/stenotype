@@ -43,11 +43,6 @@ export function acceptsInput({
   return referenceLength > 0;
 }
 
-/** True when a reference is available to display/compare locally. */
-export function hasLocalReference(referenceLength: number): boolean {
-  return referenceLength > 0;
-}
-
 /**
  * Auto-finish on an exact text match is only safe when the reference
  * is local. Dictation must finish on submit/timer instead, otherwise

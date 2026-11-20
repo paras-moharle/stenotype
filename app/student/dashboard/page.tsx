@@ -49,7 +49,13 @@ export default async function StudentDashboardPage() {
           where: attemptWhere,
           orderBy: { createdAt: 'desc' },
           take: 5,
-          include: { dictation: { select: { title: true } } },
+          select: {
+            id: true,
+            wpm: true,
+            accuracy: true,
+            createdAt: true,
+            dictation: { select: { title: true } },
+          },
         }),
         db.dictation.findMany({
           where: { status: 'PUBLISHED' },

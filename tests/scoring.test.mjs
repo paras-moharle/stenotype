@@ -269,11 +269,6 @@ test('align() rejects inputs over MAX_ALIGN_CHARS', () => {
   );
 });
 
-test('wordDiff alias matches tokenDiff', () => {
-  const alignment = align('Hello, world.', 'Hello world');
-  assert.deepEqual(alignment.wordDiff, alignment.tokenDiff);
-});
-
 test('WPM uses wall-clock elapsed and accuracy adjustment', () => {
   // 11 chars in 10s => (11/5)/(10/60) = 13.2 raw, 100% => 13 net
   const s = score('The cat sat', 'The cat sat', 10_000);

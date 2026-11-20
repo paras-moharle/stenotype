@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import {
   acceptsInput,
   persistsAttempt,
-  hasLocalReference,
   MAX_EXTRA_CHARS,
   typedCharCap,
   usesAnchoredAutoFinish,
@@ -45,11 +44,6 @@ test('free and custom still require a local reference', () => {
   assert.equal(acceptsInput({ mode: 'custom', referenceLength: 0 }), false);
   assert.equal(acceptsInput({ mode: 'free', referenceLength: 10 }), true);
   assert.equal(acceptsInput({ mode: 'custom', referenceLength: 10 }), true);
-});
-
-test('hasLocalReference is exactly the reference test', () => {
-  assert.equal(hasLocalReference(0), false);
-  assert.equal(hasLocalReference(1), true);
 });
 
 test('dictation never auto-finishes on a text match', () => {

@@ -39,6 +39,21 @@ export default async function AdminDashboardPage() {
 
   return (
     <div className="space-y-6">
+      <AdminHeader
+        title="Overview"
+        description="Students, dictations and the latest scored attempts."
+      />
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <AdminStat
+          label="Students"
+          value={totalStudents}
+          hint={`${activeStudents} active`}
+        />
+        <AdminStat label="Dictations" value={publishedDictations} hint="published" />
+        <AdminStat label="Attempts" value={totalAttempts} hint="dictation only" />
+      </div>
+
       {/* Recent activity */}
       <div className="rounded-lg border border-border p-6">
         <div className="mb-4 flex items-center justify-between">
