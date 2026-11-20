@@ -1,7 +1,8 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { requireAdmin } from '@/lib/admin/require-admin';
+import { banUserSchema } from '@/lib/admin/schemas';
+import { isNotFoundError } from '@/lib/prisma-errors';
 
 /**
  * POST /api/admin/users/[id]/ban
@@ -13,55 +14,72 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const me = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-  if (me?.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (!gate.ok) return gate.response;
 
   const { id } = await params;
   const body = await request.json().catch(() => null);
-  const { banned, reason } = body ?? {};
+  const parsed = banUserSchema.safeParse(body);
 
-  if (typeof banned !== 'boolean') {
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: 'banned must be a boolean' },
+      { error: parsed.error.issues[0]?.message ?? 'Invalid input' },
       { status: 400 }
     );
   }
 
-  // Prevent self-ban.
-  if (id === session.user.id) {
+  const { banned, reason } = parsed.data;
+
+  if (id === gate.userId) {
     return NextResponse.json(
       { error: 'You cannot ban yourself' },
       { status: 400 }
     );
   }
 
-  const updated = await db.user.update({
+  const target = await db.user.findUnique({
     where: { id },
-    data: {
-      banned,
-      banReason: banned ? (reason ?? null) : null,
-      banExpires: null,
-    },
-    select: { id: true, email: true, banned: true, banReason: true },
+    select: { id: true, role: true },
   });
-
-  // If banning, revoke all sessions immediately.
-  if (banned) {
-    await db.session.deleteMany({ where: { userId: id } });
+  if (!target) {
+    return NextResponse.json({ error: 'User not found' }, { status: 404 });
   }
 
-  return NextResponse.json({ user: updated });
-}
+  // Banning an admin could lock the last administrator out of the site.
+  if (banned && target.role === 'admin') {
+    return NextResponse.json(
+      { error: 'Admin accounts cannot be banned from this screen.' },
+      { status: 409 }
+    );
+  }
 
+  try {
+    // Ban and session revocation must succeed together: a banned user
+    // with a live session still passes every page check that reads
+    // only the session.
+    const updated = await db.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id },
+        data: {
+          banned,
+          banReason: banned ? (reason ?? null) : null,
+          banExpires: null,
+        },
+        select: { id: true, email: true, banned: true, banReason: true },
+      });
+
+      if (banned) {
+        await tx.session.deleteMany({ where: { userId: id } });
+      }
+
+      return user;
+    });
+
+    return NextResponse.json({ user: updated });
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+    throw error;
+  }
+}

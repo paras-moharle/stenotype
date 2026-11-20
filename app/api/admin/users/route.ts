@@ -1,7 +1,6 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { requireAdmin } from '@/lib/admin/require-admin';
 
 /**
  * GET /api/admin/users
@@ -9,20 +8,8 @@ import { db } from '@/lib/db';
  * Admin-only: list all users with their login stats.
  */
 export async function GET() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const me = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-  if (me?.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (!gate.ok) return gate.response;
 
   const users = await db.user.findMany({
     select: {

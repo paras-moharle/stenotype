@@ -122,12 +122,17 @@ export default function AdminDictationsPage() {
         method: 'DELETE',
       });
 
-      if (!res.ok) throw new Error('Failed to delete');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? 'Failed to delete dictation');
+      }
 
       setToast('Dictation deleted');
       fetchDictations();
-    } catch {
-      setError('Failed to delete dictation');
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to delete dictation'
+      );
     }
   };
 

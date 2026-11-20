@@ -1,15 +1,10 @@
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { z } from 'zod';
-
-const createStudentSchema = z.object({
-  name: z.string().min(1).max(100),
-  email: z.string().email(),
-  password: z.string().min(8).max(128),
-  phone: z.string().max(20).optional(),
-});
 import { db } from '@/lib/db';
+import { requireAdmin } from '@/lib/admin/require-admin';
+import { createStudentSchema } from '@/lib/admin/schemas';
+import { isUniqueViolation } from '@/lib/prisma-errors';
 
 /**
  * GET /api/admin/students
@@ -18,20 +13,8 @@ import { db } from '@/lib/db';
  * Admin-only: list students or create a new student account.
  */
 export async function GET() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const me = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-  if (me?.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (!gate.ok) return gate.response;
 
   const students = await db.studentProfile.findMany({
     include: {
@@ -57,20 +40,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const me = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-  if (me?.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (!gate.ok) return gate.response;
 
   const body = await request.json().catch(() => null);
   const parsed = createStudentSchema.safeParse(body);
@@ -82,22 +53,28 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, email, password, phone } = parsed.data;
+  const { name, email, password } = parsed.data;
+  const phone = parsed.data.phone?.trim() ? parsed.data.phone.trim() : null;
 
-  // Create the user via Better Auth (hashes password properly).
+  // `admin.createUser` creates the account WITHOUT signing it in — unlike
+  // `signUpEmail`, which used to leave a ghost session and a fake
+  // "successful login" audit row for every student the admin created.
+  let createdUserId: string | null = null;
+
   try {
-    const result = await auth.api.signUpEmail({
+    // No explicit role: the admin plugin's `defaultRole` is already
+    // "student", and the typed API only allows the plugin's known roles.
+    const created = await auth.api.createUser({
       body: { email, password, name },
       headers: await headers(),
     });
 
-    const userId = result.user.id;
+    createdUserId = created.user.id;
 
-    // Create the student profile.
     const profile = await db.studentProfile.create({
       data: {
-        userId,
-        phone: phone ?? null,
+        userId: createdUserId,
+        phone,
       },
       include: {
         user: {
@@ -107,10 +84,24 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ student: profile }, { status: 201 });
-  } catch (err) {
+  } catch (error) {
+    // Never leave a user without a profile behind.
+    if (createdUserId) {
+      await db.user
+        .delete({ where: { id: createdUserId } })
+        .catch(() => undefined);
+    }
+
     const message =
-      err instanceof Error ? err.message : 'Failed to create student';
+      error instanceof Error ? error.message : 'Failed to create student';
+
+    if (isUniqueViolation(error) || /already exists/i.test(message)) {
+      return NextResponse.json(
+        { error: 'A user with this email already exists.' },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
-

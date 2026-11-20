@@ -123,12 +123,15 @@ export default function AdminStudentsPage() {
         method: 'DELETE',
       });
 
-      if (!res.ok) throw new Error('Failed to delete');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? 'Failed to delete student');
+      }
 
       setToast('Student deleted');
       fetchStudents();
-    } catch {
-      setError('Failed to delete student');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete student');
     }
   };
 

@@ -1,7 +1,6 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { requireAdmin } from '@/lib/admin/require-admin';
 
 /**
  * GET /api/admin/login-history
@@ -10,24 +9,21 @@ import { db } from '@/lib/db';
  * Query params: ?page=1&limit=50&email=...&success=true|false
  */
 export async function GET(request: Request) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const me = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-  if (me?.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (!gate.ok) return gate.response;
 
   const url = new URL(request.url);
-  const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10));
-  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') ?? '50', 10)));
+  // parseInt('abc') is NaN, and Prisma rejects NaN skip/take with a 500.
+  const requestedPage = Number.parseInt(url.searchParams.get('page') ?? '1', 10);
+  const requestedLimit = Number.parseInt(
+    url.searchParams.get('limit') ?? '50',
+    10
+  );
+  const page =
+    Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(100, Math.max(1, requestedLimit))
+    : 50;
   const emailFilter = url.searchParams.get('email');
   const successFilter = url.searchParams.get('success');
 
