@@ -181,12 +181,53 @@ export const MIN_SCORED_ELAPSED_MS = 3000;
 export const MIN_SCORED_TYPED_CHARS = 10;
 
 /**
+ * Hard ceiling for raw speed.
+ *
+ * The server cannot know when the first keystroke really happened (the
+ * browser reports elapsed time), so a submission can claim an absurdly
+ * short duration. 350 raw WPM is far beyond sustained human typing
+ * (~200 is exceptional), so anything above it is rejected rather than
+ * stored. This is a sanity bound, not a cryptographic proof of timing.
+ */
+export const MAX_PLAUSIBLE_WPM = 350;
+
+/**
  * Hard cap for any reference / typed string fed to align().
  * The character DP is O(n·m); without a cap a very long custom
  * paste can freeze the tab. Custom text is capped at
  * MAX_CUSTOM_CHARS in the UI; this is the engine-level guard.
  */
 export const MAX_ALIGN_CHARS = 20000;
+
+/**
+ * Work budget for the two dynamic-programming alignments.
+ *
+ * The character DP allocates `(n+1)*(m+1)` Uint16 cells. Two 20,000
+ * character strings pass the length cap but need ~400M cells (~800 MB)
+ * and hundreds of millions of inner-loop steps — enough to OOM or stall
+ * a serverless function. The token DP has the same shape over tokens.
+ *
+ * Exceeding either budget is a clean RangeError, which the API turns
+ * into 400 "Input too large to score".
+ */
+// 25M cells ≈ 50 MB of Uint16 and a few tens of millions of steps — enough
+// for a 5,000-character dictation against a 5,000-character transcription,
+// while rejecting the 400M-cell worst case.
+export const MAX_ALIGN_CELLS = 26_000_000;
+// Tokens are roughly a quarter of characters, so ~2,000 tokens per side
+// (~8,000 characters) is still allowed.
+export const MAX_TOKEN_CELLS = 4_000_000;
+
+function assertWithinBudget(
+  rows: number,
+  cols: number,
+  maxCells: number,
+  label: 'character' | 'token'
+): void {
+  if (rows * cols > maxCells) {
+    throw new RangeError(`${label} alignment work budget exceeded.`);
+  }
+}
 
 /** Maximum custom-text length accepted by the UI (chars, post-sanitize). */
 export const MAX_CUSTOM_CHARS = 5000;
@@ -287,6 +328,8 @@ function alignTokens(
   const tEnd = m - suffix;
   const rn = rEnd - rStart;
   const tn = tEnd - tStart;
+
+  assertWithinBudget(rn + 1, tn + 1, MAX_TOKEN_CELLS, 'token');
 
   if (rn === 0) {
     for (let j = 0; j < tn; j += 1) {
@@ -444,6 +487,17 @@ export function align(
   const m = typed.length;
   const ops: AlignmentOp[] = [];
 
+  // Tokenise up front so the token DP budget is checked before any
+  // character-level allocation happens.
+  const refTokens = tokenizeScored(reference);
+  const typedTokens = tokenizeScored(typed);
+  assertWithinBudget(
+    refTokens.length + 1,
+    typedTokens.length + 1,
+    MAX_TOKEN_CELLS,
+    'token'
+  );
+
   let prefix = 0;
   while (prefix < n && prefix < m && reference[prefix] === typed[prefix]) {
     ops.push({
@@ -470,6 +524,8 @@ export function align(
   const tEnd = m - suffix;
   const rn = rEnd - rStart;
   const tn = tEnd - tStart;
+
+  assertWithinBudget(rn + 1, tn + 1, MAX_ALIGN_CELLS, 'character');
 
   if (rn === 0) {
     for (let j = 0; j < tn; j += 1) {
@@ -611,8 +667,6 @@ export function align(
   }
 
   // ── Single token alignment (scoring + review) ──
-  const refTokens = tokenizeScored(reference);
-  const typedTokens = tokenizeScored(typed);
   const tokenOps = alignTokens(refTokens, typedTokens);
 
   const words = emptyStats();

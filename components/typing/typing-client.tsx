@@ -22,6 +22,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/use-auth';
 import { Button } from '@/components/ui/button';
 import {
   align,
@@ -67,18 +68,21 @@ export type TypingClientProps = {
   variant?: 'public' | 'student';
   initialMode?: Mode;
   initialDictationId?: string;
-  authenticated?: boolean;
 };
 
 export default function TypingClient({
   variant = 'public',
   initialMode = 'free',
   initialDictationId,
-  authenticated = true,
 }: TypingClientProps) {
   const showModes = variant === 'student';
   const isPublic = variant === 'public';
   const router = useRouter();
+
+  // Auth state comes from the shared provider. On protected pages it is
+  // server-seeded, so this is known on first paint; on the public home
+  // it resolves once and unlocks the member tabs.
+  const { isAuthenticated: authenticated } = useAuth();
 
   const [mode, setMode] = useState<Mode>(initialMode);
   const [duration, setDuration] = useState<Duration>(30);

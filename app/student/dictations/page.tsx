@@ -5,7 +5,6 @@ import { formatISTDate } from '@/lib/datetime';
 import Link from 'next/link';
 import {
   Youtube,
-  Eye,
   Keyboard,
   BarChart3,
   X,
@@ -34,9 +33,6 @@ export default function StudentDictationsPage() {
   const [dictations, setDictations] = useState<Dictation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [viewingText, setViewingText] = useState<Dictation | null>(null);
-  const [transcript, setTranscript] = useState<string>('');
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [viewingResults, setViewingResults] = useState<Dictation | null>(null);
   const [results, setResults] = useState<Attempt[]>([]);
   const [resultsLoading, setResultsLoading] = useState(false);
@@ -60,24 +56,6 @@ export default function StudentDictationsPage() {
   useEffect(() => {
     fetchDictations();
   }, [fetchDictations]);
-
-  const handleViewText = async (dictation: Dictation) => {
-    setViewingText(dictation);
-    setTranscriptLoading(true);
-    try {
-      const res = await fetch(`/api/dictations/${dictation.id}/transcript`);
-      if (res.ok) {
-        const data = await res.json();
-        setTranscript(data.transcript);
-      } else {
-        setTranscript('Transcript not available.');
-      }
-    } catch {
-      setTranscript('Failed to load transcript.');
-    } finally {
-      setTranscriptLoading(false);
-    }
-  };
 
   const handleViewResults = async (dictation: Dictation) => {
     setViewingResults(dictation);
@@ -166,16 +144,6 @@ export default function StudentDictationsPage() {
                   )}
 
                   <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleViewText(dictation)}
-                    className="rounded-full w-full"
-                  >
-                    <Eye className="mr-1 h-4 w-4" />
-                    View Text
-                  </Button>
-
-                  <Button
                     size="sm"
                     asChild
                     className="rounded-full w-full"
@@ -201,56 +169,6 @@ export default function StudentDictationsPage() {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* View Text Modal */}
-      {viewingText && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-2xl rounded-3xl bg-background p-6 max-h-[80vh] overflow-y-auto">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">{viewingText.title}</h2>
-                <p className="text-sm text-muted-foreground">
-                  {viewingText.category}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setViewingText(null)}
-                className="rounded-full"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {transcriptLoading ? (
-              <div className="text-center py-8 text-muted-foreground">
-                Loading transcript...
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-border bg-muted/30 p-5">
-                <p className="text-base leading-relaxed whitespace-pre-wrap">
-                  {transcript}
-                </p>
-              </div>
-            )}
-
-            <div className="mt-4 flex gap-2">
-              <Button asChild className="flex-1 rounded-full">
-                <Link
-                  href={`/student/typing?mode=dictation&dictationId=${viewingText.id}`}
-                >
-                  <Keyboard className="mr-2 h-4 w-4" />
-                  Start Practice
-                </Link>
-              </Button>
-              <Button variant="outline" onClick={() => setViewingText(null)} className="rounded-full">
-                Close
-              </Button>
-            </div>
-          </div>
         </div>
       )}
 

@@ -10,6 +10,7 @@ A typing/stenography practice app for students. Built with Next.js 16, React 19,
 - **Server-side scoring** — Results computed on the server, never trusted from client
 - **Dictation management** — Admin uploads YouTube dictations with transcripts
 - **Student tracking** — Per-dictation attempt history and progress stats
+- **Admin-created accounts** — no public sign-up; an admin adds every student
 - **Secure auth** — Better Auth with single-session enforcement and login audit
 - **Admin controls** — Manage students and dictations, ban users, revoke sessions
 
@@ -102,7 +103,11 @@ Vercel auto-deploys on push. The build runs `prisma generate && next build`.
 
 ## Auth
 
-Better Auth with email/password and DB-backed sessions. Single active session per user (a new sign-in revokes others). Every successful sign-in is written to the `LoginAttempt` audit table. Admins can ban users and revoke sessions via the admin API.
+Better Auth with email/password and DB-backed sessions. **Public sign-up is
+disabled** (`lib/auth-config.ts`): accounts are created by an admin from
+`/admin/students`, or by the seed script. Single active session per user (a new
+sign-in revokes others). Every successful sign-in is written to the
+`LoginAttempt` audit table. Admins can ban users and revoke sessions.
 
 ## Project structure
 

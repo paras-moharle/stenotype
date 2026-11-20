@@ -1,7 +1,6 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { requireStudent } from '@/lib/api-guard';
 
 /**
  * GET /api/student/attempts
@@ -14,29 +13,15 @@ import { db } from '@/lib/db';
  * and are excluded so the history only ever shows dictation results.
  */
 export async function GET(request: Request) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const profile = await db.studentProfile.findUnique({
-    where: { userId: session.user.id },
-  });
-  if (!profile) {
-    return NextResponse.json(
-      { error: 'Student profile not found' },
-      { status: 404 }
-    );
-  }
+  const gate = await requireStudent();
+  if (!gate.ok) return gate.response;
 
   const url = new URL(request.url);
   const dictationId = url.searchParams.get('dictationId');
 
   const attempts = await db.typingAttempt.findMany({
     where: {
-      studentId: profile.id,
+      studentId: gate.profileId,
       // Only dictation attempts are real results.
       dictationId: dictationId ?? { not: null },
     },

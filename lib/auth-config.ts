@@ -1,6 +1,20 @@
 import type { BetterAuthRateLimitOptions } from 'better-auth';
 
 /**
+ * Public self-registration is disabled.
+ *
+ * Accounts are created only by an admin from the admin panel
+ * (`auth.api.createUser`, which bypasses this flag). Without this,
+ * anyone could create a student account and read the practice content
+ * for free.
+ *
+ * Guarded by tests/security-config.test.mjs.
+ */
+export const signUpPolicy = {
+  disableSignUp: true,
+} as const;
+
+/**
  * Rate limiting for Better Auth.
  *
  * `storage` MUST stay `'memory'`.

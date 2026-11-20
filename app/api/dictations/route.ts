@@ -1,7 +1,6 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { requireUser } from '@/lib/api-guard';
 
 /**
  * GET /api/dictations
@@ -12,12 +11,8 @@ import { db } from '@/lib/db';
  * during scoring (POST /api/attempts).
  */
 export async function GET() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
 
   const dictations = await db.dictation.findMany({
     where: { status: 'PUBLISHED' },

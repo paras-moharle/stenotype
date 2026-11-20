@@ -1,7 +1,6 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { requireAdmin } from '@/lib/admin/require-admin';
 
 /**
  * GET /api/dictations/[id]/transcript
@@ -15,12 +14,11 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Admin-only: a student must not be able to read the dictation text
+  // before practising. They receive it from POST /api/attempts after the
+  // attempt has been scored (for the review).
+  const gate = await requireAdmin();
+  if (!gate.ok) return gate.response;
 
   const { id } = await params;
 

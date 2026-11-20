@@ -31,6 +31,17 @@ export async function requireAdmin(): Promise<AdminGate> {
     };
   }
 
+  // A banned admin must lose API access even if a session survived.
+  if (session.user.banned) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: 'This account is suspended.' },
+        { status: 403 }
+      ),
+    };
+  }
+
   const me = await db.user.findUnique({
     where: { id: session.user.id },
     select: { role: true },

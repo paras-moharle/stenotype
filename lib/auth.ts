@@ -2,7 +2,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { admin } from 'better-auth/plugins';
 import { db } from './db';
-import { rateLimitConfig } from './auth-config';
+import { rateLimitConfig, signUpPolicy } from './auth-config';
 
 // ─────────────────────────────────────────────────────────────
 // Better Auth — email/password + DB sessions + admin plugin.
@@ -37,6 +37,8 @@ export const auth = betterAuth({
     requireEmailVerification: false,
     minPasswordLength: 8,
     maxPasswordLength: 128,
+    // No public sign-up: admins create every account.
+    ...signUpPolicy,
   },
 
   session: {

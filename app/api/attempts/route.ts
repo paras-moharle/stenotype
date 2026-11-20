@@ -1,10 +1,14 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { attemptSubmissionSchema } from '@/lib/schemas';
-import { align, scoreFromAlignment } from '@/lib/typing/scoring';
+import {
+  align,
+  MAX_PLAUSIBLE_WPM,
+  scoreFromAlignment,
+} from '@/lib/typing/scoring';
 import { attemptSnapshot } from '@/lib/typing/attempt-snapshot';
+import { requireStudent } from '@/lib/api-guard';
+import { ATTEMPT_RATE_LIMIT, checkRateLimit } from '@/lib/rate-limit';
 
 /**
  * POST /api/attempts
@@ -17,34 +21,38 @@ import { attemptSnapshot } from '@/lib/typing/attempt-snapshot';
  * it produced (typed text + elapsed time); the server owns the score,
  * the completion flag and the attempt id.
  *
- * Body (validated by attemptSubmissionSchema):
- * {
- *   passageId: string,   // published dictation id
- *   typed: string,       // exactly what the student typed
- *   elapsedMs: number,   // first keystroke -> submit
- * }
+ * Guards, in order:
+ *   1. signed-in, not banned, student profile not suspended
+ *   2. per-user rate limit (each call runs an O(n·m) alignment + a write)
+ *   3. schema validation
+ *   4. published dictation lookup
+ *   5. scoring, with a hard work budget (RangeError -> 400)
+ *   6. minimum attempt size and a plausible-speed ceiling
  */
 export async function POST(request: Request) {
-  // ── Auth ──────────────────────────────────────────────
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // 1. Account state
+  const gate = await requireStudent();
+  if (!gate.ok) return gate.response;
 
-  // ── Find student profile ──────────────────────────────
-  const profile = await db.studentProfile.findUnique({
-    where: { userId: session.user.id },
-  });
-  if (!profile) {
+  // 2. Burst guard
+  const limit = checkRateLimit(
+    `attempts:${gate.userId}`,
+    ATTEMPT_RATE_LIMIT.limit,
+    ATTEMPT_RATE_LIMIT.windowMs
+  );
+  if (!limit.allowed) {
     return NextResponse.json(
-      { error: 'Student profile not found' },
-      { status: 404 }
+      { error: 'Too many attempts. Please wait a moment and try again.' },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(Math.ceil(limit.retryAfterMs / 1000)),
+        },
+      }
     );
   }
 
-  // ── Validate input ────────────────────────────────────
+  // 3. Validate
   const body = await request.json().catch(() => null);
   const parsed = attemptSubmissionSchema.safeParse(body);
   if (!parsed.success) {
@@ -63,9 +71,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Resolve the dictation ─────────────────────────────
-  // The transcript is fetched server-side only. The client never
-  // receives the reference text before scoring.
+  // 4. Resolve the dictation (transcript stays server-side until scored)
   const dictation = await db.dictation.findUnique({
     where: { id: passageId },
     select: { id: true, referenceTranscript: true, status: true },
@@ -78,31 +84,44 @@ export async function POST(request: Request) {
     );
   }
 
-  const reference = dictation.referenceTranscript;
-
-  // ── Server-side scoring ───────────────────────────────
-  // The engine is the single source of truth.
+  // 5. Score
   let score;
   try {
-    const alignment = align(reference, typed);
+    const alignment = align(dictation.referenceTranscript, typed);
     score = scoreFromAlignment(alignment, elapsedMs);
   } catch {
-    // align() throws RangeError when input exceeds MAX_ALIGN_CHARS.
     return NextResponse.json(
       { error: 'Input too large to score' },
       { status: 400 }
     );
   }
 
-  // ── Store the attempt ─────────────────────────────────
-  // `completed` is derived, not claimed: it means the passage was
-  // transcribed to the end. The full breakdown comes from one mapper
-  // so the API cannot drift from the schema.
+  // 6. Reject attempts the UI already calls unscored, and impossible speed
+  if (!score.scored) {
+    return NextResponse.json(
+      {
+        error:
+          'This attempt is too short to record. Type for at least 3 seconds and 10 characters.',
+      },
+      { status: 400 }
+    );
+  }
+
+  const minutes = Math.max(elapsedMs, 1) / 60_000;
+  const rawWpm = typed.length / 5 / minutes;
+  if (rawWpm > MAX_PLAUSIBLE_WPM) {
+    return NextResponse.json(
+      { error: 'That speed is not realistically possible. Attempt not recorded.' },
+      { status: 400 }
+    );
+  }
+
+  // Store the attempt. `completed` is derived, not claimed.
   const snapshot = attemptSnapshot(score);
 
   const attempt = await db.typingAttempt.create({
     data: {
-      studentId: profile.id,
+      studentId: gate.profileId,
       dictationId: dictation.id,
       typedText: typed,
       elapsedMs,
@@ -113,12 +132,9 @@ export async function POST(request: Request) {
     },
   });
 
-  // ── Return the server-computed score ──────────────────
-  // The client displays THIS, not its own computation. The reference
-  // is included for the review display (only after scoring).
   return NextResponse.json({
     attemptId: attempt.id,
-    reference,
+    reference: dictation.referenceTranscript,
     completed: attempt.completed,
     score: {
       accuracy: score.accuracy,

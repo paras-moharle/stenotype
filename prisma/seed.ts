@@ -24,11 +24,17 @@ async function ensureUser(
     return;
   }
 
-  // Create through Better Auth so the password is hashed in the
-  // exact format Better Auth expects.
-  await auth.api.signUpEmail({
-    body: { email, password, name },
-    headers: new Headers(),
+  // Create through the admin plugin so the password is hashed in the
+  // exact format Better Auth expects. `signUpEmail` would be rejected:
+  // public sign-up is disabled (lib/auth-config.ts). Called without
+  // request headers, createUser runs as a privileged server-side call.
+  await auth.api.createUser({
+    body: {
+      email,
+      password,
+      name,
+      ...(role === 'admin' ? { role: 'admin' as const } : {}),
+    },
   });
 
   await db.user.update({ where: { email }, data: { role } });
