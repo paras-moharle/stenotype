@@ -1,61 +1,11 @@
-'use client';
-
-import { useState, useEffect } from 'react';
 import { StudentHeader } from '@/components/student/student-header';
 import { Mail, User as UserIcon, Shield } from 'lucide-react';
-import { useAuth } from '@/lib/use-auth';
+import { requireStudentPage } from '@/lib/student-session';
+import { dictationAttemptStats } from '@/lib/dictation-history';
 
-type Stats = {
-  totalAttempts: number;
-  avgWpm: number;
-  avgAccuracy: number;
-  bestWpm: number;
-};
-
-export default function StudentProfilePage() {
-  const { user, isLoading } = useAuth();
-  const [stats, setStats] = useState<Stats | null>(null);
-
-  useEffect(() => {
-    if (user) {
-      fetch('/api/student/attempts')
-        .then((res) => (res.ok ? res.json() : { attempts: [] }))
-        .then((data) => {
-          const attempts = data.attempts;
-          if (attempts.length > 0) {
-            setStats({
-              totalAttempts: attempts.length,
-              avgWpm: Math.round(
-                attempts.reduce((sum: number, a: { wpm: number }) => sum + a.wpm, 0) /
-                  attempts.length
-              ),
-              avgAccuracy: Math.round(
-                attempts.reduce(
-                  (sum: number, a: { accuracy: number }) => sum + a.accuracy,
-                  0
-                ) / attempts.length
-              ),
-              bestWpm: Math.max(...attempts.map((a: { wpm: number }) => a.wpm)),
-            });
-          } else {
-            setStats({
-              totalAttempts: 0,
-              avgWpm: 0,
-              avgAccuracy: 0,
-              bestWpm: 0,
-            });
-          }
-        })
-        .catch(() => {
-          setStats({
-            totalAttempts: 0,
-            avgWpm: 0,
-            avgAccuracy: 0,
-            bestWpm: 0,
-          });
-        });
-    }
-  }, [user]);
+export default async function StudentProfilePage() {
+  const { user, profile } = await requireStudentPage();
+  const stats = await dictationAttemptStats(profile.id);
 
   const initials = user?.name
     ?.split(' ')
@@ -63,20 +13,6 @@ export default function StudentProfilePage() {
     .slice(0, 2)
     .join('')
     .toUpperCase();
-
-  if (isLoading) {
-    return (
-      <div className="space-y-10">
-        <StudentHeader
-          title="My profile"
-          description="Your account information."
-        />
-        <div className="text-center py-8 text-muted-foreground">
-          Loading...
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-10">
@@ -87,9 +23,9 @@ export default function StudentProfilePage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Profile card */}
-        <div className="rounded-lg border border-border bg-surface p-6 lg:col-span-2">
+        <div className="panel card-sheen p-6 lg:col-span-2">
           <div className="flex items-start gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand text-2xl font-bold text-brand-foreground">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-soft text-2xl font-bold text-brand shadow-lg ">
               {initials || <UserIcon className="h-6 w-6" />}
             </div>
             <div>
@@ -106,13 +42,13 @@ export default function StudentProfilePage() {
         </div>
 
         {/* Practice summary */}
-        <div className="rounded-lg border border-border bg-surface p-6">
+        <div className="panel card-sheen p-6">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Practice summary
           </h2>
           {stats && stats.totalAttempts > 0 ? (
             <div className="mt-4 space-y-3">
-              <StatRow label="Attempts (latest 50)" value={stats.totalAttempts} />
+              <StatRow label="All attempts" value={stats.totalAttempts} />
               <StatRow label="Average WPM" value={stats.avgWpm} />
               <StatRow label="Average accuracy" value={`${stats.avgAccuracy}%`} />
               <StatRow label="Best WPM" value={stats.bestWpm} />
@@ -152,7 +88,7 @@ function StatRow({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
+      <span className="font-mono font-semibold tabular-nums text-foreground">{value}</span>
     </div>
   );
 }

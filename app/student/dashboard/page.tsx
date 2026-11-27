@@ -1,6 +1,7 @@
 import { StudentGreeting } from '@/components/student/student-greeting';
 import { db } from '@/lib/db';
-import { getSession } from '@/lib/session';
+import { dictationAttemptsWhere, dictationAttemptStats } from '@/lib/dictation-history';
+import { requireStudentPage } from '@/lib/student-session';
 import { formatISTDate } from '@/lib/datetime';
 import Link from 'next/link';
 import { Headphones, BarChart3, Keyboard, TrendingUp } from 'lucide-react';
@@ -8,87 +9,29 @@ import { Headphones, BarChart3, Keyboard, TrendingUp } from 'lucide-react';
 export const dynamic = 'force-dynamic';
 
 export default async function StudentDashboardPage() {
-  // Request-cached: the layout already resolved this session, so this
-  // call costs no extra DB round-trip.
-  const session = await getSession();
-
-  let stats = {
-    totalAttempts: 0,
-    avgWpm: 0,
-    avgAccuracy: 0,
-    bestWpm: 0,
-  };
-  let recentAttempts: {
-    id: string;
-    wpm: number;
-    accuracy: number;
-    createdAt: Date;
-    dictation: { title: string } | null;
-  }[] = [];
-  let availableDictations: {
-    id: string;
-    title: string;
-    category: string;
-    youtubeId: string | null;
-  }[] = [];
-
-  if (session?.user) {
-    const profile = await db.studentProfile.findUnique({
-      where: { userId: session.user.id },
-    });
-
-    if (profile) {
-      const attemptWhere = {
-        studentId: profile.id,
-        // Results are dictation-only; legacy free/custom rows are hidden.
-        dictationId: { not: null },
-      } as const;
-
-      const [attempts, dictations] = await Promise.all([
-        db.typingAttempt.findMany({
-          where: attemptWhere,
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-          select: {
-            id: true,
-            wpm: true,
-            accuracy: true,
-            createdAt: true,
-            dictation: { select: { title: true } },
-          },
-        }),
-        db.dictation.findMany({
-          where: { status: 'PUBLISHED' },
-          take: 6,
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            title: true,
-            category: true,
-            youtubeId: true,
-          },
-        }),
-      ]);
-
-      recentAttempts = attempts;
-      availableDictations = dictations;
-
-      if (attempts.length > 0) {
-        const aggregates = await db.typingAttempt.aggregate({
-          where: attemptWhere,
-          _count: { _all: true },
-          _avg: { wpm: true, accuracy: true },
-          _max: { wpm: true },
-        });
-        stats = {
-          totalAttempts: aggregates._count._all,
-          avgWpm: Math.round(aggregates._avg.wpm ?? 0),
-          avgAccuracy: Math.round(aggregates._avg.accuracy ?? 0),
-          bestWpm: aggregates._max.wpm ?? 0,
-        };
-      }
-    }
-  }
+  const { profile } = await requireStudentPage();
+  const attemptWhere = { ...dictationAttemptsWhere, studentId: profile.id };
+  const [recentAttempts, availableDictations, stats] = await Promise.all([
+    db.typingAttempt.findMany({
+      where: attemptWhere,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 5,
+      select: {
+        id: true,
+        wpm: true,
+        accuracy: true,
+        createdAt: true,
+        dictation: { select: { title: true } },
+      },
+    }),
+    db.dictation.findMany({
+      where: { status: 'PUBLISHED' },
+      take: 6,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, title: true, category: true },
+    }),
+    dictationAttemptStats(profile.id),
+  ]);
 
   return (
     <div className="space-y-10">
@@ -97,25 +40,25 @@ export default async function StudentDashboardPage() {
       {/* Stats */}
       {stats.totalAttempts > 0 && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="section-label">
             Your progress
           </h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
-              <div className="text-3xl font-extrabold text-brand">{stats.totalAttempts}</div>
+            <div className="stat card-sheen hover-lift animate-fade-in">
+              <div className="stat-value text-brand">{stats.totalAttempts}</div>
               <div className="text-sm text-muted-foreground">Attempts</div>
             </div>
-            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
-              <div className="text-3xl font-extrabold text-brand">{stats.avgWpm}</div>
-              <div className="text-sm text-muted-foreground">Avg WPM</div>
+            <div className="stat card-sheen hover-lift animate-fade-in">
+              <div className="stat-value text-brand">{stats.avgWpm}</div>
+              <div className="text-sm text-muted-foreground">Avg net WPM</div>
             </div>
-            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
-              <div className="text-3xl font-extrabold text-brand">{stats.avgAccuracy}%</div>
-              <div className="text-sm text-muted-foreground">Avg Accuracy</div>
+            <div className="stat card-sheen hover-lift animate-fade-in">
+              <div className="stat-value text-brand">{stats.avgAccuracy}%</div>
+              <div className="text-sm text-muted-foreground">Avg attempted accuracy</div>
             </div>
-            <div className="rounded-2xl border border-border p-5 hover-lift animate-fade-in">
-              <div className="text-3xl font-extrabold text-brand">{stats.bestWpm}</div>
-              <div className="text-sm text-muted-foreground">Best WPM</div>
+            <div className="stat card-sheen hover-lift animate-fade-in">
+              <div className="stat-value text-brand">{stats.bestWpm}</div>
+              <div className="text-sm text-muted-foreground">Best net WPM</div>
             </div>
           </div>
         </section>
@@ -123,7 +66,7 @@ export default async function StudentDashboardPage() {
 
       {/* Shortcuts */}
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+        <h2 className="section-label">
           Quick practice
         </h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -151,7 +94,7 @@ export default async function StudentDashboardPage() {
       {/* Available dictations */}
       {availableDictations.length > 0 && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="section-label">
             Available dictations
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -159,14 +102,14 @@ export default async function StudentDashboardPage() {
               <Link
                 key={dictation.id}
                 href={`/student/typing?mode=dictation&dictationId=${dictation.id}`}
-                className="rounded-3xl border border-border bg-card p-5 hover:border-brand hover-lift animate-fade-in transition-all"
+                className="card-sheen group rounded-3xl border border-border/70 bg-brand-soft p-5 shadow-card transition-all duration-300  hover:border-brand/30 hover:shadow-pop"
               >
                 <div className="mb-2">
-                  <span className="rounded bg-brand px-2 py-1 text-xs font-bold text-brand-foreground">
-                    DICTATION
+                  <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-brand shadow-sm shadow-brand/20">
+                    Dictation
                   </span>
                 </div>
-                <h3 className="font-medium">{dictation.title}</h3>
+                <h3 className="font-medium text-foreground transition-colors group-hover:text-brand">{dictation.title}</h3>
                 <p className="text-sm text-muted-foreground">
                   {dictation.category}
                 </p>
@@ -179,21 +122,23 @@ export default async function StudentDashboardPage() {
       {/* Recent attempts */}
       {recentAttempts.length > 0 && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="section-label">
             Recent attempts
           </h2>
           <div className="space-y-2">
             {recentAttempts.map((attempt) => (
               <div
                 key={attempt.id}
-                className="flex items-center justify-between rounded-lg border border-border p-3"
+                className="card flex flex-wrap items-center justify-between gap-2 p-3 transition-colors hover:border-brand/25"
               >
                 <div className="flex items-center gap-3">
-                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand ring-1 ring-brand/15">
+                    <TrendingUp className="h-4 w-4" strokeWidth={1.6} />
+                  </span>
                   <div>
-                    <div className="font-medium">{attempt.wpm} WPM</div>
+                    <div className="font-mono font-semibold tabular-nums text-foreground">{attempt.wpm} net WPM</div>
                     <div className="text-sm text-muted-foreground">
-                      {attempt.accuracy}% accuracy
+                      {attempt.accuracy}% attempted accuracy
                       {attempt.dictation ? ` · ${attempt.dictation.title}` : ''}
                     </div>
                   </div>
@@ -224,10 +169,12 @@ function ShortcutCard({
   return (
     <Link
       href={href}
-      className="rounded-3xl border border-border bg-card p-5 hover:border-brand hover-lift animate-fade-in transition-all"
+      className="card-sheen group rounded-3xl border border-border/70 bg-brand-soft p-5 shadow-card transition-all duration-300  hover:border-brand/30 hover:shadow-pop"
     >
-      <Icon className="mb-2 h-6 w-6 text-brand" />
-      <h3 className="font-medium">{title}</h3>
+      <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-soft text-brand ring-1 ring-brand/20 transition-transform duration-300 group-hover:scale-105">
+        <Icon className="h-5 w-5" />
+      </span>
+      <h3 className="font-medium text-foreground transition-colors group-hover:text-brand">{title}</h3>
       <p className="text-sm text-muted-foreground">{description}</p>
     </Link>
   );

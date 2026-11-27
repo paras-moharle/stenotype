@@ -71,3 +71,12 @@ test('messageFrom falls back for empty or malformed payloads', () => {
   assert.equal(messageFrom({ message: '   ' }, 'fallback'), 'fallback');
   assert.equal(messageFrom('not-an-object', 'fallback'), 'fallback');
 });
+
+test('Neon runtime verifies peer and hostname regardless of legacy URL mode', async () => {
+  const { runtimeDatabaseUrl } = await import('../lib/db-config.ts');
+  const raw = 'postgresql://example.neon.tech/app?sslmode=require&sslrootcert=test-ca';
+  const result = new URL(runtimeDatabaseUrl(raw));
+  assert.equal(result.searchParams.get('sslmode'), 'verify-full');
+  assert.equal(result.searchParams.get('sslrootcert'), 'test-ca');
+  assert.equal(runtimeDatabaseUrl('postgresql://localhost/dev'), 'postgresql://localhost/dev');
+});

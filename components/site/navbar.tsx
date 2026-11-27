@@ -2,190 +2,39 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
-import { Menu, X, LogOut, User } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
+import { LayoutDashboard, LogOut } from 'lucide-react';
 import { useAuth } from '@/lib/use-auth';
 import { Logo } from '@/components/site/logo';
-
-const navLinks = [
-  { href: '/', label: 'Practice' },
-  { href: '/about', label: 'About' },
-];
+import { ThemeSwitch } from '@/components/ui/theme-switch';
 
 export function Navbar() {
   const pathname = usePathname();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const { user, isAuthenticated, isLoading, signOut } = useAuth();
-
-  const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname.startsWith(href);
+  const { user, isLoading, signOut } = useAuth();
+  const workspace = user?.role === 'admin' ? '/admin' : '/student/dashboard';
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-background sm:bg-background/90 sm:backdrop-blur-md">
-      <nav className="container-page relative flex h-16 items-center justify-between sm:h-20">
-        <Logo onClick={() => setMobileOpen(false)} />
-
-        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-border/70 bg-surface/70 p-1 shadow-sm md:flex">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              aria-current={isActive(link.href) ? 'page' : undefined}
-              className={cn(
-                'rounded-xl px-3 py-2 text-sm font-medium transition-colors',
-                isActive(link.href)
-                  ? 'bg-brand/10 text-brand'
-                  : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
-              )}
-            >
-              {link.label}
-            </Link>
-          ))}
+    <header className="border-b border-border bg-surface">
+      <nav aria-label="Main navigation" className="container-typing grid grid-cols-[1fr_auto] items-center gap-x-2 sm:min-h-16 sm:grid-cols-[1fr_auto_1fr]">
+        <Logo size="sm" />
+        <div className="order-last col-span-2 flex items-stretch gap-1 border-t border-border sm:order-0 sm:col-span-1 sm:border-0">
+          <Link href="/" className="shell-nav-link min-h-11 justify-center max-sm:flex-1" aria-current={pathname === '/' ? 'page' : undefined}>Practice</Link>
+          <Link href="/about" className="shell-nav-link min-h-11 justify-center max-sm:flex-1" aria-current={pathname === '/about' ? 'page' : undefined}>About</Link>
         </div>
-
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {isAuthenticated && user?.role === 'admin' && (
-            <Link
-              href="/admin"
-              className="hidden rounded-xl px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:bg-brand/10 sm:inline-flex"
-            >
-              Admin
-            </Link>
-          )}
-
-          {isAuthenticated && user?.role === 'student' && (
-            <Link
-              href="/student/dashboard"
-              className="hidden rounded-xl px-3 py-1.5 text-sm font-medium text-brand transition-colors hover:bg-brand/10 sm:inline-flex"
-            >
-              Dashboard
-            </Link>
-          )}
-
-          {isLoading ? (
-            <span
-              className="h-9 w-20 animate-pulse rounded-xl bg-surface"
-              aria-hidden="true"
-            />
-          ) : isAuthenticated ? (
-            <div className="flex items-center gap-2 sm:gap-3">
-              <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-2 py-1.5 sm:px-3">
-                <User
-                  className="h-3.5 w-3.5 text-muted-foreground"
-                  strokeWidth={1.5}
-                />
-                <span className="hidden text-sm font-medium text-foreground sm:inline">
-                  {user?.name?.split(' ')[0] ?? user?.email}
-                </span>
-                <span className="hidden font-mono text-[10px] uppercase tracking-wider text-brand sm:inline">
-                  {user?.role}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={signOut}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
-                aria-label="Sign out"
-              >
-                <LogOut className="h-4 w-4" strokeWidth={1.5} />
+        <div className="flex min-h-12 items-center justify-end gap-1">
+          <ThemeSwitch />
+          {isLoading ? <span aria-hidden className="h-11 w-[4.5rem] rounded-lg bg-muted" /> : user ? (
+            <>
+              <Link className="shell-nav-link max-[359px]:size-11 max-[359px]:justify-center max-[359px]:p-0" href={workspace} aria-label="Workspace">
+                <LayoutDashboard className="hidden size-4 max-[359px]:block" aria-hidden />
+                <span className="max-[359px]:sr-only">Workspace</span>
+              </Link>
+              <button type="button" className="shell-nav-link size-11 justify-center p-0" onClick={signOut} aria-label="Sign out">
+                <LogOut className="size-4" aria-hidden />
               </button>
-            </div>
-          ) : (
-            <Link
-              href="/login"
-              className="flex h-9 items-center rounded-xl border border-border bg-surface px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-            >
-              Sign in
-            </Link>
-          )}
-
-          <button
-            type="button"
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-surface text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 md:hidden"
-            onClick={() => setMobileOpen((value) => !value)}
-            aria-label="Toggle navigation menu"
-            aria-expanded={mobileOpen}
-          >
-            {mobileOpen ? (
-              <X className="h-5 w-5" />
-            ) : (
-              <Menu className="h-5 w-5" />
-            )}
-          </button>
+            </>
+          ) : <Link href="/login" aria-current={pathname === '/login' ? 'page' : undefined} className="shell-nav-link min-h-11 bg-brand-soft px-3 text-brand">Sign in</Link>}
         </div>
       </nav>
-
-      {mobileOpen && (
-        <div className="border-t border-border bg-background md:hidden">
-          <div className="container-page flex flex-col gap-1 py-3">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={() => setMobileOpen(false)}
-                aria-current={isActive(link.href) ? 'page' : undefined}
-                className={cn(
-                  'rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
-                  isActive(link.href)
-                    ? 'bg-brand/10 text-brand'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                )}
-              >
-                {link.label}
-              </Link>
-            ))}
-
-            {isAuthenticated && user?.role === 'admin' && (
-              <Link
-                href="/admin"
-                onClick={() => setMobileOpen(false)}
-                className="rounded-xl px-3 py-2.5 text-sm font-medium text-brand hover:bg-brand/10"
-              >
-                Admin
-              </Link>
-            )}
-
-            {isAuthenticated && user?.role === 'student' && (
-              <Link
-                href="/student/dashboard"
-                onClick={() => setMobileOpen(false)}
-                className="rounded-xl px-3 py-2.5 text-sm font-medium text-brand hover:bg-brand/10"
-              >
-                Dashboard
-              </Link>
-            )}
-
-            {isLoading ? (
-            <span
-              className="h-9 w-20 animate-pulse rounded-xl bg-surface"
-              aria-hidden="true"
-            />
-          ) : isAuthenticated ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileOpen(false);
-                  signOut();
-                }}
-                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                Sign out ({user?.role})
-              </button>
-            ) : (
-              <Button asChild size="sm" className="mt-1 rounded-xl">
-                <Link href="/login" onClick={() => setMobileOpen(false)}>
-                  Sign in
-                </Link>
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
     </header>
   );
 }
-

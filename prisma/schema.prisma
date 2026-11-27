@@ -83,9 +83,10 @@ model User {
 // ============================================================
 // LOGIN AUDIT LOG
 // ============================================================
-// Every sign-in attempt (success or failure) is recorded so the
-// admin has full visibility: who, when, from where, and whether
-// it worked. Written by the auth hooks in lib/auth.ts.
+// Successful sign-ins are recorded so the admin can see who signed in,
+// when, and from where. Failed attempts are not captured yet: Better
+// Auth exposes no reliable failure hook, so `success` is currently
+// always true. Written by the auth hooks in lib/auth.ts.
 //
 
 model LoginAttempt {
@@ -165,44 +166,21 @@ model Dictation {
 
 //
 // ============================================================
-// ASSIGNMENTS
-// ============================================================
-// An assignment targets either:
-// STUDENT -> studentId populated
-// Application/server validation must enforce that exactly one
-// target is supplied.
-//
-
-
-//
-// ============================================================
-// DICTATION ATTEMPTS
-// ============================================================
-// A student is reached through their StudentProfile (single link).
-//
-
-
-//
-// ============================================================
-// EVALUATION
-// ============================================================
-// Mirrors the scoring engine output: items accuracy (words +
-// punctuation), completion, net/raw WPM, and wrong/missed/extra
-// counts split by words and punctuation.
-//
-
-
-
-//
-// ============================================================
 // TYPING SUITE
 // ============================================================
 // Only dictation attempts are persisted. Free practice and custom
 // text are local-only by product decision, so every stored row must
-// point at the dictation it was scored against. `dictationId` stays
-// nullable in the database only so this migration is additive; the
-// API never writes a row without it.
+// point at the dictation it was scored against.
 //
+
+// Published scoring text is shared by exact content. Application writes
+// only insert missing references. Historical attempts without a snapshot
+// deliberately keep no reference assignment.
+model DictationReference {
+  digest     String @id
+  transcript String
+  attempts   TypingAttempt[]
+}
 
 model TypingAttempt {
   id String @id @default(uuid())
@@ -210,8 +188,15 @@ model TypingAttempt {
   studentId String
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
 
-  dictationId String?
-  dictation   Dictation? @relation(fields: [dictationId], references: [id], onDelete: SetNull)
+  dictationId String
+  dictation   Dictation @relation(fields: [dictationId], references: [id], onDelete: Restrict)
+
+  submissionKey     String?
+  referenceSnapshot String? // Compatibility for older writers
+  referenceDigest   String?
+  reference         DictationReference? @relation(fields: [referenceDigest], references: [digest], onDelete: Restrict, onUpdate: Restrict)
+  scoreVersion       Int?
+  rawWpm            Int?
 
   typedText String
 
@@ -220,16 +205,9 @@ model TypingAttempt {
   wpm      Float
   accuracy Float
 
-  // Legacy counters. Kept ONLY because the currently deployed build
-  // still selects and inserts them; the live API stores the numbers
-  // below instead. Remove in a follow-up migration once the new build
-  // is live. Defaults let the new API omit them safely.
-  correctCharacters   Int @default(0)
-  incorrectCharacters Int @default(0)
-
-  // Full result breakdown. Every column defaults to 0 so the currently
-  // deployed build (which only knows the two counters above) can still
-  // insert; the API always writes the real numbers.
+  // Full result breakdown. Every column defaults to 0 so an older
+  // deployed build can still insert; the API always writes the real
+  // numbers.
   /** How much of the dictation was covered, 0-100. */
   completion Int @default(0)
 
@@ -249,29 +227,10 @@ model TypingAttempt {
 
   createdAt DateTime @db.Timestamptz(3) @default(now())
 
+  @@unique([studentId, submissionKey])
   @@index([studentId, createdAt])
   @@index([dictationId])
 }
-
-//
-// ============================================================
-// FEES
-// ============================================================
-//
-
-//
-// ============================================================
-// SCHEDULE
-// ============================================================
-//
-
-
-//
-// ============================================================
-// ANNOUNCEMENTS
-// ============================================================
-//
-
 
 //
 // ============================================================
@@ -289,10 +248,9 @@ model Session {
   ipAddress      String?
   userAgent      String?
   impersonatedBy String?
-  userId         String
+  userId         String @unique
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   @@map("session")
 }
 
@@ -328,3 +286,17 @@ model Verification {
   @@map("verification")
 }
 
+
+model AbuseBucket {
+  key     String   @id
+  count   Int
+  resetAt DateTime @db.Timestamptz(3)
+
+  @@index([resetAt])
+}
+
+// Historical null-dictation records are retained outside the active app.
+model LegacyTypingAttemptArchive {
+  id  String @id
+  row Json
+}

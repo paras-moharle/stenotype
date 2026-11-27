@@ -1,0 +1,186 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, audit/fixes]
+  schedule:
+    # Weekly full audit, Monday 03:00 UTC.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Disposable CI database and a throwaway auth secret. Never real values.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/stenotype
+  BETTER_AUTH_SECRET: ci-only-throwaway-secret-do-not-use-in-production
+  BETTER_AUTH_URL: http://localhost:3000
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  checks:
+    name: Typecheck, lint, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: stenotype
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d stenotype"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@12.19.0
+
+      - name: Locate pnpm store
+        id: store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: ${{ runner.os }}-node24-pnpm12-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate and validate Prisma client configuration
+        run: |
+          pnpm exec prisma generate
+          pnpm exec prisma validate
+
+      - name: Seed legacy compatibility fixtures on the disposable DB
+        env:
+          STENO_DISPOSABLE_DB: "YES"
+        run: |
+          pnpm exec prisma db execute --file prisma/migrations/20261120150000_init/migration.sql
+          pnpm exec prisma migrate resolve --applied 20261120150000_init
+          pnpm exec prisma db execute --file scripts/db/legacy-fixture.sql
+          node --import tsx scripts/db/check-legacy-read.ts
+
+      - name: Apply migrations to the disposable CI database
+        run: pnpm exec prisma migrate deploy
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Run authenticated and browser regression tests
+        env:
+          ADMIN_EMAIL: admin@example.test
+          ADMIN_PASSWORD: local-ci-admin-password
+          STUDENT_EMAIL: student@example.test
+          STUDENT_PASSWORD: local-ci-student-password
+          SMOKE_BASE_URL: http://localhost:3000
+          SMOKE_EMAIL: student@example.test
+          SMOKE_PASSWORD: local-ci-student-password
+          STENO_E2E_URL: http://localhost:3000
+          STENO_INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/stenotype
+          STENO_DISPOSABLE_DB: "YES"
+          STENO_EXPECT_LEGACY_FIXTURE: "YES"
+        run: |
+          set -euo pipefail
+          export CHROME_BIN="$(command -v google-chrome || command -v chromium)"
+          pnpm run db:seed
+          server_pid=
+          stop_server() {
+            if [[ -n "$server_pid" ]]; then
+              kill "$server_pid" 2>/dev/null || true
+              wait "$server_pid" 2>/dev/null || true
+              server_pid=
+            fi
+          }
+          trap stop_server EXIT
+          start_server() {
+            local port=$1
+            shift
+            env BETTER_AUTH_URL="http://localhost:$port" "$@" node node_modules/next/dist/bin/next start -H 127.0.0.1 -p "$port" > "$RUNNER_TEMP/stenotype-$port.log" 2>&1 &
+            server_pid=$!
+            for attempt in $(seq 1 60); do
+              if curl -fsS "http://localhost:$port/" > /dev/null 2>&1; then return; fi
+              if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            cat "$RUNNER_TEMP/stenotype-$port.log"
+            return 1
+          }
+          run_required() {
+            local report="$RUNNER_TEMP/stenotype-tests.tap"
+            node --import tsx --test --test-reporter=tap "$@" | tee "$report"
+            grep -Eq '^# tests [1-9][0-9]*$' "$report"
+            grep -qx '# skipped 0' "$report"
+          }
+          start_server 3000
+          run_required tests/db-integration.test.mjs
+          run_required tests/auth-http.test.mjs
+          stop_server
+          start_server 3000
+          run_required tests/typing-ui-browser.test.mjs
+          stop_server
+
+          start_server 3001 DB_PROJECT_USAGE_PERCENT=80
+          STENO_CAPACITY_TEST_URL=http://localhost:3001 run_required tests/db-capacity-http.test.mjs
+
+  security:
+    name: Dependency and secret checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@12.19.0
+
+      - name: Scan tracked history and working directory for secrets
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$archive"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --log-opts=--all --redact=100 .
+          "$RUNNER_TEMP/gitleaks" dir --redact=100 .
+
+      - name: Audit locked dependencies (high and critical)
+        if: always()
+        run: pnpm audit --audit-level high

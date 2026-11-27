@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+# Audit-only gitleaks config.
+# Build output and installed tooling are not source; scanning them only
+# produces false positives (minified strings that look like keys).
+[allowlist]
+paths = [
+  '''(^|/)\.env($|\.(local|development|test|production)(\.local)?$)''',
+  '''node_modules''',
+  '''\.next''',
+  '''\.git''',
+  '''tsconfig\.tsbuildinfo''',
+]

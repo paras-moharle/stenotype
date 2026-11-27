@@ -1,230 +1,59 @@
-'use client';
-
-import { useState, useEffect, useCallback } from 'react';
-import { formatISTDate } from '@/lib/datetime';
+import { DictationFilters } from '@/components/student/dictation-filters';
 import Link from 'next/link';
-import {
-  Youtube,
-  Keyboard,
-  BarChart3,
-  X,
-} from 'lucide-react';
-import {
-  StudentHeader,
-} from '@/components/student/student-header';
+import { BarChart3, Keyboard, Youtube } from 'lucide-react';
+import { db } from '@/lib/db';
+import { requireStudentPage } from '@/lib/student-session';
+import { catalogCategories, catalogFields, dictationMetadata } from '@/lib/dictation-catalog';
+import { parsePageNumber } from '@/lib/pagination';
+import { youtubeWatchUrl } from '@/lib/youtube';
+import { StudentHeader } from '@/components/student/student-header';
+import { DictationStudy } from '@/components/student/dictation-study';
 import { Button } from '@/components/ui/button';
+import { ResultsPagination } from '@/components/ui/results-pagination';
 
-type Dictation = {
-  id: string;
-  title: string;
-  category: string;
-  youtubeId: string | null;
-  durationSeconds: number | null;
-};
+const PAGE_SIZE = 24;
 
-type Attempt = {
-  id: string;
-  wpm: number;
-  accuracy: number;
-  createdAt: string;
-};
+export default async function StudentDictationsPage({ searchParams }: {
+  searchParams: Promise<{ q?: string; category?: string; sort?: string; page?: string }>;
+}) {
+  await requireStudentPage();
+  const params = await searchParams;
+  const q = typeof params.q === 'string' ? params.q.trim().slice(0, 120) : '';
+  const category = catalogCategories.find(value => value === params.category);
+  const sort = params.sort === 'title' ? 'title' : 'newest';
+  const page = parsePageNumber(params.page);
+  const filters = { q, category: category ?? '', sort };
+  const library = `/student/dictations?${new URLSearchParams({ ...filters, page: String(page) })}`;
+  const rows = await db.dictation.findMany({
+    where: { status: 'PUBLISHED', category, ...(q ? { title: { contains: q, mode: 'insensitive' } } : {}) },
+    select: catalogFields,
+    orderBy: [sort === 'title' ? { title: 'asc' } : { publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+    take: PAGE_SIZE + 1,
+    skip: (page - 1) * PAGE_SIZE,
+  });
 
-export default function StudentDictationsPage() {
-  const [dictations, setDictations] = useState<Dictation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [viewingResults, setViewingResults] = useState<Dictation | null>(null);
-  const [results, setResults] = useState<Attempt[]>([]);
-  const [resultsLoading, setResultsLoading] = useState(false);
-
-  const fetchDictations = useCallback(async () => {
-    try {
-      const res = await fetch('/api/dictations');
-      if (res.ok) {
-        const data = await res.json();
-        setDictations(data.dictations);
-      } else {
-        setError('Failed to load dictations');
-      }
-    } catch {
-      setError('Failed to load dictations');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchDictations();
-  }, [fetchDictations]);
-
-  const handleViewResults = async (dictation: Dictation) => {
-    setViewingResults(dictation);
-    setResultsLoading(true);
-    try {
-      const res = await fetch(`/api/student/attempts?dictationId=${dictation.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setResults(data.attempts);
-      }
-    } catch {
-      // Ignore — results will be empty.
-    } finally {
-      setResultsLoading(false);
-    }
-  };
-
-  return (
-    <div className="space-y-8">
-      <StudentHeader
-        title="Dictation library"
-        description="Open a dictation on YouTube, then practise typing it blind."
-      />
-
-      {error && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-500">
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="text-center py-8 text-muted-foreground">
-          Loading dictations...
-        </div>
-      ) : dictations.length === 0 ? (
-        <div className="rounded-2xl border border-border p-8 text-center text-muted-foreground">
-          No dictations available yet. Check back soon!
-        </div>
-      ) : (
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {dictations.map((dictation, index) => (
-            <div
-              key={dictation.id}
-              style={{ animationDelay: `${index * 50}ms` }}
-              className="rounded-[2rem] border border-border bg-card overflow-hidden hover-lift animate-slide-up shadow-lg"
-            >
-              {/* Thumbnail-style header — big area, number centered */}
-              <div className="flex h-40 items-center justify-center bg-gradient-to-br from-brand/30 via-brand/15 to-transparent">
-                <span className="text-6xl font-extrabold text-brand drop-shadow-lg">
-                  {index + 1}
-                </span>
-              </div>
-
-              {/* Content */}
-              <div className="p-6 space-y-5">
-                <div>
-                  <h3 className="text-lg font-bold">{dictation.title}</h3>
-                  <p className="text-sm text-muted-foreground">
-                    {dictation.category}
-                  </p>
-                </div>
-
-                {/* Action buttons */}
-                <div className="grid grid-cols-2 gap-2">
-                  {dictation.youtubeId ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      asChild
-                      className="rounded-full w-full"
-                    >
-                      <a
-                        href={`https://youtube.com/watch?v=${dictation.youtubeId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <Youtube className="mr-1 h-4 w-4" />
-                        YouTube
-                      </a>
-                    </Button>
-                  ) : (
-                    <Button variant="outline" size="sm" disabled className="rounded-full w-full">
-                      <Youtube className="mr-1 h-4 w-4" />
-                      No Video
-                    </Button>
-                  )}
-
-                  <Button
-                    size="sm"
-                    asChild
-                    className="rounded-full w-full"
-                  >
-                    <Link
-                      href={`/student/typing?mode=dictation&dictationId=${dictation.id}`}
-                    >
-                      <Keyboard className="mr-1 h-4 w-4" />
-                      Practice
-                    </Link>
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleViewResults(dictation)}
-                    className="rounded-full w-full"
-                  >
-                    <BarChart3 className="mr-1 h-4 w-4" />
-                    My Results
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* My Results Modal */}
-      {viewingResults && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-lg rounded-3xl bg-background p-6 max-h-[80vh] overflow-y-auto">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">My Results</h2>
-                <p className="text-sm text-muted-foreground">
-                  {viewingResults.title}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setViewingResults(null)}
-                className="rounded-full"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {resultsLoading ? (
-              <div className="text-center py-8 text-muted-foreground">
-                Loading results...
-              </div>
-            ) : results.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No attempts yet. Click Practice to start!
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {results.map((attempt) => (
-                  <div
-                    key={attempt.id}
-                    className="flex items-center justify-between rounded-2xl border border-border p-4"
-                  >
-                    <div>
-                      <div className="text-xl font-bold">{attempt.wpm} WPM</div>
-                      <div className="text-sm text-muted-foreground">
-                        {attempt.accuracy}% accuracy
-                      </div>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {formatISTDate(attempt.createdAt)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+  return <div className="space-y-5">
+    <StudentHeader title="Dictation library" description="Read a transcript for study, or open YouTube and transcribe in the Typing tab." />
+    <DictationFilters {...filters} />
+    {rows.length === 0 ? <div className="panel space-y-2 p-5">
+      <p>{q || category ? 'No dictations match these filters.' : page > 1 ? 'No dictations on this page.' : 'No published dictations yet.'}</p>
+      {(q || category || page > 1) && <Link className="text-brand underline" href="/student/dictations">Reset filters and page</Link>}
+    </div> : <ul className="divide-y divide-border rounded-2xl border border-border bg-surface">
+      {rows.slice(0, PAGE_SIZE).map(item => {
+        const video = youtubeWatchUrl(item.youtubeId);
+        const practiceHref = `/student/typing?${new URLSearchParams({ mode: 'dictation', dictationId: item.id, from: library })}`;
+        return <li key={item.id} className="grid items-center gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="min-w-0"><h2 className="break-words font-semibold">{item.title}</h2><p className="text-sm text-muted-foreground">{dictationMetadata(item)}</p></div>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            <Button asChild variant="outline" className="h-11 gap-2 px-2 sm:px-4"><Link prefetch={false} href={`/student/results?dictationId=${encodeURIComponent(item.id)}`}><BarChart3 size={16} aria-hidden /> Results</Link></Button>
+            {video ? <Button asChild variant="outline" className="h-11 gap-2 px-2 sm:px-4"><a href={video} target="_blank" rel="noopener noreferrer" aria-label="YouTube (opens in a new tab)"><Youtube size={16} aria-hidden /> YouTube</a></Button>
+              : <Button variant="outline" disabled className="h-11 gap-2 px-2 sm:px-4"><Youtube size={16} aria-hidden /> No video</Button>}
+            <DictationStudy item={item} practiceHref={practiceHref} />
+            <Button asChild className="h-11 gap-2 px-2 sm:px-4"><Link prefetch={false} href={practiceHref}><Keyboard size={16} aria-hidden /> Practice</Link></Button>
           </div>
-        </div>
-      )}
-    </div>
-  );
+        </li>;
+      })}
+    </ul>}
+    <ResultsPagination label="Dictation library pages" path="/student/dictations" page={page} hasMore={rows.length > PAGE_SIZE} filters={filters} />
+  </div>;
 }
-

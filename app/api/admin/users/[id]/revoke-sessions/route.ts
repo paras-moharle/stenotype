@@ -8,13 +8,23 @@ import { requireAdmin } from '@/lib/admin/require-admin';
  * Admin-only: revoke all sessions for a user (force re-login).
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const gate = await requireAdmin();
+  const gate = await requireAdmin(request);
   if (!gate.ok) return gate.response;
 
   const { id } = await params;
+
+  // Match the ban route: an unknown id is a 404, not a silent success.
+  // Check first so an existing user with no sessions still returns 200.
+  const target = await db.user.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!target) {
+    return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  }
 
   const result = await db.session.deleteMany({
     where: { userId: id },

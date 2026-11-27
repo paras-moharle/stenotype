@@ -5,9 +5,8 @@
  * API can never drift from the schema and the result screen can trust
  * what it reads back.
  *
- * The old character counters are still written for the build that is
- * currently deployed (it selects and inserts them); the new screens
- * use the word/punctuation breakdown instead.
+ * Only the word/punctuation breakdown is persisted. The old character
+ * counters were removed in the drop_legacy_attempt_columns migration.
  */
 
 import type { ScoreResult, TokenStats } from './scoring';
@@ -27,10 +26,6 @@ export type AttemptSnapshot = {
   punctuationExtra: number;
   punctuationMissed: number;
   punctuationTotal: number;
-
-  /** Legacy character counters, kept for the deployed build. */
-  correctCharacters: number;
-  incorrectCharacters: number;
 };
 
 function snapshotOf(stats: TokenStats) {
@@ -61,8 +56,5 @@ export function attemptSnapshot(score: ScoreResult): AttemptSnapshot {
     punctuationExtra: punctuation.extra,
     punctuationMissed: punctuation.missed,
     punctuationTotal: punctuation.total,
-
-    correctCharacters: score.correct,
-    incorrectCharacters: score.errors,
   };
 }

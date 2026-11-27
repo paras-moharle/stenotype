@@ -1,33 +1,20 @@
-import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireUser } from '@/lib/api-guard';
+import { requireStudent } from '@/lib/api-guard';
+import { catalogFields, validDictationId } from '@/lib/dictation-catalog';
 
-/**
- * GET /api/dictations
- *
- * Returns published dictations WITHOUT transcripts.
- * Students see titles, categories, and YouTube links — never
- * the reference text. Transcripts are only accessed server-side
- * during scoring (POST /api/attempts).
- */
-export async function GET() {
-  const gate = await requireUser();
+export async function GET(request: Request) {
+  const gate = await requireStudent();
   if (!gate.ok) return gate.response;
 
-  const dictations = await db.dictation.findMany({
-    where: { status: 'PUBLISHED' },
-    select: {
-      id: true,
-      title: true,
-      category: true,
-      youtubeId: true,
-      durationSeconds: true,
-      // NOTE: referenceTranscript is intentionally excluded.
-      // Students must not see the transcript before completing.
-    },
-    orderBy: { createdAt: 'desc' },
+  // Practice requests only the selected exercise's public metadata.
+  const id = new URL(request.url).searchParams.get('id');
+  if (!id || !validDictationId(id)) {
+    return Response.json({ error: 'Select a dictation from the library.' }, { status: 400 });
+  }
+  const dictation = await db.dictation.findFirst({
+    where: { id, status: 'PUBLISHED' },
+    select: catalogFields,
   });
-
-  return NextResponse.json({ dictations });
+  if (!dictation) return Response.json({ error: 'Dictation is unavailable.' }, { status: 404 });
+  return Response.json({ dictation }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
-

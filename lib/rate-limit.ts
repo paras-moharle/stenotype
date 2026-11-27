@@ -12,6 +12,7 @@
 type Bucket = { count: number; resetAt: number };
 
 const buckets = new Map<string, Bucket>();
+let lastSweep: number | undefined;
 
 export type RateLimitResult = {
   allowed: boolean;
@@ -25,6 +26,12 @@ export function checkRateLimit(
   windowMs: number,
   now: number = Date.now()
 ): RateLimitResult {
+  if (lastSweep === undefined || now - lastSweep >= 60_000) {
+    for (const [bucketKey, entry] of buckets) {
+      if (entry.resetAt <= now) buckets.delete(bucketKey);
+    }
+    lastSweep = now;
+  }
   const bucket = buckets.get(key);
 
   if (!bucket || now >= bucket.resetAt) {
@@ -47,6 +54,7 @@ export function checkRateLimit(
 /** Test helper — clears all buckets. */
 export function resetRateLimits(): void {
   buckets.clear();
+  lastSweep = undefined;
 }
 
 /** Attempt submission budget: 30 per user per 5 minutes. */

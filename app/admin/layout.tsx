@@ -1,6 +1,5 @@
-import { redirect } from 'next/navigation';
+import { requireAdminPage } from '@/lib/admin/require-admin';
 import { AdminShell } from '@/components/admin/admin-shell';
-import { getCurrentUser } from '@/lib/session';
 import { AuthProvider } from '@/lib/auth-provider';
 
 /**
@@ -17,13 +16,7 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const current = await getCurrentUser();
-  if (!current) {
-    redirect('/login');
-  }
-  if (current.role !== 'admin' || current.banned) {
-    redirect('/login?denied=1');
-  }
+  const current = await requireAdminPage();
 
   return (
     <AuthProvider

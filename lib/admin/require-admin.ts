@@ -1,25 +1,21 @@
+import { cache } from 'react';
+import { redirect } from 'next/navigation';
+import { getCurrentUser } from '@/lib/session';
 import { headers } from 'next/headers';
-import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { db } from '@/lib/db';
 
-/**
- * Admin gate for route handlers.
- *
- * Every admin route used to repeat the same twelve lines: resolve the
- * session, look the role up in the database, return 401 or 403. One
- * helper means the check cannot be forgotten in a new route and the
- * behaviour stays identical everywhere.
- *
- * The role is read from the database (not the session payload), so a
- * demotion takes effect immediately.
- */
+import { rejectCrossOriginMutation } from '@/lib/mutation-request';
 
+// Cookie caching is disabled, so the session user carries the current role.
 export type AdminGate =
   | { ok: true; userId: string }
-  | { ok: false; response: NextResponse };
+  | { ok: false; response: Response };
 
-export async function requireAdmin(): Promise<AdminGate> {
+export async function requireAdmin(request?: Request): Promise<AdminGate> {
+  if (request) {
+    const rejection = rejectCrossOriginMutation(request);
+    if (rejection) return { ok: false, response: rejection };
+  }
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -27,7 +23,7 @@ export async function requireAdmin(): Promise<AdminGate> {
   if (!session?.user) {
     return {
       ok: false,
-      response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+      response: Response.json({ error: 'Unauthorized' }, { status: 401 }),
     };
   }
 
@@ -35,24 +31,27 @@ export async function requireAdmin(): Promise<AdminGate> {
   if (session.user.banned) {
     return {
       ok: false,
-      response: NextResponse.json(
+      response: Response.json(
         { error: 'This account is suspended.' },
         { status: 403 }
       ),
     };
   }
 
-  const me = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-
-  if (me?.role !== 'admin') {
+  if (session.user.role !== 'admin') {
     return {
       ok: false,
-      response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }),
+      response: Response.json({ error: 'Forbidden' }, { status: 403 }),
     };
   }
 
   return { ok: true, userId: session.user.id };
 }
+
+
+export const requireAdminPage = cache(async () => {
+  const user = await getCurrentUser();
+  if (!user) redirect('/login');
+  if (user.role !== 'admin' || user.banned) redirect('/login?denied=1');
+  return user;
+});

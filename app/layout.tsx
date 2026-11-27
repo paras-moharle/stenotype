@@ -1,18 +1,7 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-jetbrains',
-  display: 'swap',
-});
+// Static and deterministic. Runs before paint without personalizing the HTML.
+const themeBootstrap = `try { const theme = localStorage.getItem("stenotype-theme"); if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme; } catch {}`;
 
 export const metadata: Metadata = {
   title: 'StenoType — Dictation. Transcription. Precision.',
@@ -36,7 +25,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#121110',
+  colorScheme: 'light dark',
 };
 
 export default function RootLayout({
@@ -45,8 +34,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{ __html: themeBootstrap }} /></head>
       <body className="font-sans antialiased">
+        <a href="#main-content" className="skip-link">Skip to content</a>
         <div className="flex min-h-screen flex-col">{children}</div>
       </body>
     </html>

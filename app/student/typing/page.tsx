@@ -10,6 +10,8 @@ type Mode = 'free' | 'dictation' | 'custom';
 function StudentTypingContent() {
   const searchParams = useSearchParams();
   const dictationId = searchParams.get('dictationId') ?? undefined;
+  const from = searchParams.get('from');
+  const libraryHref = from?.startsWith('/student/dictations?') ? '/student/dictations?' + new URLSearchParams(from.slice('/student/dictations?'.length)) : undefined;
   const modeParam = searchParams.get('mode');
 
   const mode: Mode =
@@ -25,9 +27,11 @@ function StudentTypingContent() {
     <div className="min-w-0 space-y-4 pb-8 sm:space-y-5">
       <StudentHeader
         title="Typing"
-        description="Practice with your own text, assigned dictations, or curated passages."
+        description="Practice with your own text, published dictations, or curated passages."
       />
       <TypingClient
+        key={JSON.stringify([mode, dictationId])}
+        libraryHref={libraryHref}
         variant="student"
         initialMode={mode}
         initialDictationId={dictationId}

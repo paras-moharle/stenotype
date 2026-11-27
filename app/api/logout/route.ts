@@ -1,6 +1,8 @@
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
+import { db } from '@/lib/db';
+import { rejectCrossOriginMutation } from '@/lib/mutation-request';
 
 /**
  * POST /api/logout
@@ -14,15 +16,23 @@ import { auth } from '@/lib/auth';
  * did not log anyone out. The client uses it as a fallback when
  * `/api/auth/sign-out` fails.
  */
-export async function POST() {
+export async function POST(request: Request) {
+  const rejection = rejectCrossOriginMutation(request);
+  if (rejection) return rejection;
   try {
+    const incoming = await headers();
+    const current = await auth.api.getSession({ headers: incoming, query: { disableRefresh: true } });
+    if (current) {
+      await db.session.deleteMany({ where: { id: current.session.id, userId: current.user.id } });
+    }
     const response = await auth.api.signOut({
-      headers: await headers(),
+      headers: incoming,
       asResponse: true,
     });
 
     const forwarded = new Headers({
       'Cache-Control': 'no-store',
+      'Content-Type': response.headers.get('Content-Type') ?? 'application/json',
     });
 
     // getSetCookie() keeps the cookies separate. Folding several
@@ -32,11 +42,10 @@ export async function POST() {
       forwarded.append('set-cookie', cookie);
     }
 
-    return NextResponse.json({ success: true }, { headers: forwarded });
+    return new Response(response.body, { status: response.status, headers: forwarded });
   } catch {
-    // The user is signing out either way; the client also clears its
-    // own UI state and redirects.
-    return NextResponse.json({ success: true }, {
+    return NextResponse.json({ error: 'Sign-out could not be confirmed.' }, {
+      status: 503,
       headers: { 'Cache-Control': 'no-store' },
     });
   }

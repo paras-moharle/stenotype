@@ -1,20 +1,35 @@
 import type { NextConfig } from "next";
 
-// Extra dev origins (e.g. your phone on the same LAN) come from the
-// DEV_ORIGINS env var — comma-separated hostnames, e.g.
-//   DEV_ORIGINS=192.168.1.10
-// Put it in .env.local (gitignored) so no IP is committed to the repo.
-// For phone testing without any IP, use a tunnel instead:
-//   cloudflared tunnel --url http://localhost:3000
-const devOrigins = (process.env.DEV_ORIGINS ?? "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
+import { developmentOrigins } from "./lib/auth-origins";
+import { verificationHost } from "./scripts/dev-config.mjs";
 
 const nextConfig: NextConfig = {
   images: { unoptimized: true },
-  ...(devOrigins.length > 0 ? { allowedDevOrigins: devOrigins } : {}),
+  // Do not advertise the framework/version.
+  poweredByHeader: false,
   async headers() {
+    // Report-Only: nothing is blocked yet. This catches accidental
+    // external scripts/iframes and lets us tighten the policy from real
+    // console reports before enforcing it. `unsafe-inline` is required
+    // because Next injects inline bootstrap/flight scripts without a
+    // nonce; a nonce policy would force every page to be dynamic and
+    // would lose the static home page.
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "media-src 'self' blob:",
+      "connect-src 'self'",
+      "frame-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'self'",
+    ].join('; ');
+
     return [
       {
         source: '/(.*)',
@@ -26,11 +41,19 @@ const nextConfig: NextConfig = {
             value: 'max-age=63072000; includeSubDomains; preload',
           },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Content-Security-Policy-Report-Only', value: csp },
         ],
       },
     ];
   },
 };
 
-export default nextConfig;
+export default function config(phase: string): NextConfig {
+  if (phase !== PHASE_DEVELOPMENT_SERVER) return nextConfig;
+  if (process.env.STENO_DEV_PREFLIGHT !== verificationHost) {
+    throw new Error('Start StenoType with pnpm dev so the disposable database and origin are checked first.');
+  }
+  const origins = [process.env.BETTER_AUTH_URL, ...developmentOrigins()].filter(Boolean);
+  return { ...nextConfig, allowedDevOrigins: origins.map(origin => new URL(origin!).hostname) };
+}
 

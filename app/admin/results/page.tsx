@@ -1,6 +1,11 @@
+import { Button } from '@/components/ui/button';
+import { requireAdminPage } from '@/lib/admin/require-admin';
+import { ResultsPagination } from '@/components/ui/results-pagination';
+import { parsePageNumber } from '@/lib/pagination';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
 import { db } from '@/lib/db';
+import { dictationAttemptsWhere } from '@/lib/dictation-history';
 import { formatISTDateTime } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +27,7 @@ type Attempt = {
   punctuationTotal: number;
   completed: boolean;
   createdAt: Date;
-  dictation: { title: string; category: string } | null;
+  dictation: { title: string; category: string };
   student: {
     user: {
       name: string;
@@ -31,14 +36,30 @@ type Attempt = {
   };
 };
 
-export default async function AdminResultsPage() {
-  const attempts = await db.typingAttempt.findMany({
-    take: 100,
-    orderBy: { createdAt: 'desc' },
+const PAGE_SIZE = 100;
+
+export default async function AdminResultsPage({
+  searchParams,
+}: { searchParams: Promise<{ page?: string | string[]; q?: string | string[]; completed?: string | string[] }> }) {
+  await requireAdminPage();
+  const { page: pageParam, q, completed } = await searchParams;
+  const page = parsePageNumber(pageParam);
+  const query = typeof q === 'string' ? q.trim().slice(0, 120) : '';
+  const completion = completed === 'yes' || completed === 'no' ? completed : '';
+
+  const rows = await db.typingAttempt.findMany({
     where: {
-      // Results are dictation-only; legacy rows are excluded.
-      dictationId: { not: null },
+      ...dictationAttemptsWhere,
+      ...(completion && { completed: completion === 'yes' }),
+      ...(query && { OR: [
+        { dictation: { title: { contains: query, mode: 'insensitive' } } },
+        { student: { user: { name: { contains: query, mode: 'insensitive' } } } },
+        { student: { user: { email: { contains: query, mode: 'insensitive' } } } },
+      ] }),
     },
+    take: PAGE_SIZE + 1,
+    skip: (page - 1) * PAGE_SIZE,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     // Only the columns the table renders — `typedText` is excluded.
     select: {
       id: true,
@@ -66,6 +87,7 @@ export default async function AdminResultsPage() {
     },
   });
 
+  const attempts = rows.slice(0, PAGE_SIZE);
   const columns = [
     {
       key: 'student',
@@ -93,12 +115,12 @@ export default async function AdminResultsPage() {
     },
     {
       key: 'wpm',
-      header: 'WPM',
+      header: 'Net WPM',
       render: (a: Attempt) => a.wpm,
     },
     {
       key: 'accuracy',
-      header: 'Accuracy',
+      header: 'Attempted accuracy',
       render: (a: Attempt) => `${a.accuracy}%`,
     },
     {
@@ -148,10 +170,21 @@ export default async function AdminResultsPage() {
         description="Student typing attempt results"
       />
 
+      <form method="get" action="/admin/results" className="grid items-end gap-3 sm:grid-cols-[1fr_12rem_auto]">
+        <label><span className="field-label">Search student or dictation</span>
+          <input name="q" type="search" defaultValue={query} maxLength={120} className="field" />
+        </label>
+        <label><span className="field-label">Completion</span>
+          <select name="completed" defaultValue={completion} className="field">
+            <option value="">All results</option><option value="yes">Completed</option><option value="no">Incomplete</option>
+          </select>
+        </label>
+        <Button type="submit">Apply filters</Button>
+      </form>
+
       {attempts.length === 0 ? (
-        <div className="rounded-lg border border-border p-8 text-center text-muted-foreground">
-          No typing attempts yet. Results will appear here once students
-          complete their first dictation.
+        <div className="rounded-2xl border border-border/70 p-8 text-center text-muted-foreground">
+          {query || completion || page > 1 ? 'No results match this view.' : 'Results will appear after students complete a dictation.'}
         </div>
       ) : (
         <AdminTable
@@ -160,6 +193,7 @@ export default async function AdminResultsPage() {
           rowKey={(a) => a.id}
         />
       )}
+      <ResultsPagination path="/admin/results" page={page} filters={{ q: query, completed: completion }} hasMore={rows.length > PAGE_SIZE} />
     </div>
   );
 }

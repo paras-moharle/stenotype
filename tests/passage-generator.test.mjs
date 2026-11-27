@@ -1,141 +1,90 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
-
-import {
-  generatePassage,
-  PASSAGE_BANK,
-} from '../lib/passage-generator.ts';
+import test from 'node:test';
+import { passages as legal } from '../lib/passages/legal.ts';
+import { passages as professional } from '../lib/passages/professional.ts';
+import { passages as general } from '../lib/passages/general.ts';
+import { generatePassage, practiceReference, readPassageHistory, rememberPassage, seededRandom, selectPassage, timedCharacters } from '../lib/passage-generator.ts';
 import { sanitizeForTyping } from '../lib/sanitize.ts';
+import { MAX_ALIGN_CELLS } from '../lib/typing/scoring.ts';
 
-const CATEGORIES = ['Legal', 'Professional', 'General'];
+const banks = { Legal: legal, Professional: professional, General: general };
+const all = Object.values(banks).flat();
 
-const words = (text) => {
-  const trimmed = text.trim();
-  return trimmed ? trimmed.split(/\s+/).length : 0;
-};
-
-test('generates a non-empty passage', () => {
-  const passage = generatePassage();
-
-  assert.equal(typeof passage, 'string');
-  assert.ok(passage.trim().length > 0);
-  assert.ok(words(passage) >= 50);
+test('curated content has unique identifiers, typeable text and accurate metadata', () => {
+  assert.equal(new Set(all.map(p => p.id)).size, all.length);
+  assert.equal(new Set(all.map(p => p.text.toLowerCase())).size, all.length);
+  for (const [category, bank] of Object.entries(banks)) {
+    assert.equal(bank.length, 22);
+    for (const item of bank) {
+      const { text } = item;
+      assert.equal(item.category, category);
+      assert.match(item.id, /^(legal|professional|general):[a-z-]+$/);
+      assert.match(text, /^[A-Za-z0-9 .,!?;:'"()-]+[.!?]$/);
+      assert.equal(text, sanitizeForTyping(text));
+      assert.equal(item.wordCount, text.split(/\s+/).length);
+      assert.equal(item.characterCount, text.length);
+      assert.ok((item.characterCount + 41) ** 2 < MAX_ALIGN_CELLS);
+      assert.ok(item.sentenceCount >= 3 && item.punctuationDensity > 0);
+    }
+    assert.equal(bank.filter(p => p.characterCount >= 1200).length, 3);
+    assert.ok(bank.filter(p => p.wordCount >= 90 && p.wordCount < 180).length >= 2);
+  }
+  for (const difficulty of ['Easy', 'Standard', 'Advanced']) assert.ok(all.some(p => p.difficulty === difficulty));
 });
 
-test('every category produces a passage from its own bank', () => {
-  for (const category of CATEGORIES) {
-    const passage = generatePassage({ category });
-    assert.ok(PASSAGE_BANK[category].includes(passage), category);
+test('lexical near-duplicate screen across the entire bank', () => {
+  const sets = all.map(p => new Set(p.text.toLowerCase().match(/[a-z]+/g)));
+  for (let i = 0; i < sets.length; i++) for (let j = 0; j < i; j++) {
+    const overlap = [...sets[i]].filter(token => sets[j].has(token)).length;
+    assert.ok(overlap / (sets[i].size + sets[j].size - overlap) < .55, `${all[i].id} and ${all[j].id}`);
   }
 });
 
-test('mixed picks a passage from one of the category banks', () => {
-  const passage = generatePassage({ category: 'mixed' });
-  const all = CATEGORIES.flatMap((category) => PASSAGE_BANK[category]);
-
-  assert.ok(all.includes(passage));
-});
-
-test('the same seed returns the same passage', () => {
-  const first = generatePassage({ category: 'Legal', seed: 3 });
-  const second = generatePassage({ category: 'Legal', seed: 3 });
-
-  assert.equal(first, second);
-});
-
-test('negative seeds select a valid passage deterministically', () => {
-  const first = generatePassage({ category: 'Legal', seed: -1 });
-  const second = generatePassage({ category: 'Legal', seed: -1 });
-
-  assert.equal(first, second);
-  assert.ok(PASSAGE_BANK.Legal.includes(first));
-});
-
-test('non-finite seeds are rejected', () => {
-  assert.throws(
-    () => generatePassage({ category: 'Legal', seed: Number.NaN }),
-    RangeError
-  );
-  assert.throws(
-    () =>
-      generatePassage({
-        category: 'Legal',
-        seed: Number.POSITIVE_INFINITY,
-      }),
-    RangeError
-  );
-});
-
-test('targetWords narrows the pool to passages of a similar length', () => {
-  for (let seed = 0; seed < 20; seed += 1) {
-    const passage = generatePassage({
-      category: 'Legal',
-      targetWords: 60,
-      seed,
-    });
-
-    assert.ok(Math.abs(words(passage) - 60) <= 20);
-  }
-});
-
-test('passages are always within the documented 50–100 word range', () => {
-  for (const category of CATEGORIES) {
-    for (const passage of PASSAGE_BANK[category]) {
-      const count = words(passage);
-      assert.ok(count >= 50 && count <= 100, `${category}: ${count}`);
+test('timer budgets use normalized characters and excerpts stop at a sentence end', async () => {
+  for (const category of Object.keys(banks)) for (const seconds of [15, 30, 60]) {
+    for (let seed = 1; seed <= 20; seed++) {
+      const item = await generatePassage({ category, seconds, seed });
+      const excerpt = practiceReference(item.text, 'full', seconds);
+      assert.equal(item.category, category);
+      assert.ok(excerpt.length >= timedCharacters(seconds));
+      assert.ok(item.text.startsWith(excerpt));
+      assert.match(excerpt, /[.!?]$/);
+      assert.equal(practiceReference(item.text, 'short'), item.text.split(' ').slice(0, 30).join(' '));
+      assert.equal(practiceReference(item.text, 'full', seconds), excerpt);
+      assert.equal(practiceReference(item.text, 'full'), item.text);
     }
   }
 });
 
-test('consecutive draws do not repeat a passage too early', () => {
-  const seen = new Set();
-
-  for (let i = 0; i < 5; i += 1) {
-    const passage = generatePassage({ category: 'General' });
-
-    assert.ok(!seen.has(passage), 'passage repeated too early');
-    seen.add(passage);
-  }
+test('seeded selection reproduces and bounded history rotates small or exhausted pools', async () => {
+  assert.deepEqual(await generatePassage({ seed: -3 }), await generatePassage({ seed: -3 }));
+  await assert.rejects(generatePassage({ seed: NaN }), RangeError);
+  await assert.rejects(generatePassage({category: 'unknown'}), RangeError);
+  const pool = legal.slice(0, 2);
+  assert.equal(selectPassage(pool, { history: pool.map(p => p.id) }).id, pool[1].id);
+  assert.equal(selectPassage(pool.slice(0, 1), { previousId: pool[0].id }).id, pool[0].id);
+  assert.throws(() => selectPassage(pool, { seconds: 1000 }));
+  const draws = new Set();
+  const random = seededRandom(12);
+  for (let i = 0; i < 3000; i++) draws.add(selectPassage(legal, { random }).id);
+  assert.equal(draws.size, legal.length);
 });
 
-test('invalid target word counts are rejected', () => {
-  assert.throws(
-    () => generatePassage({ targetWords: Number.NaN }),
-    RangeError
-  );
-  assert.throws(() => generatePassage({ targetWords: -1 }), RangeError);
-});
-
-
-/* ─── Typeability ────────────────────────────────────────── */
-
-test('every curated passage is typeable on a standard keyboard', () => {
-  // A curated passage containing a character no keyboard can produce
-  // (e.g. an em dash) caps a word-perfect run below 100% and cannot be
-  // pasted around because paste is blocked on the typing input.
-  const allowed = /^[A-Za-z0-9 .,!?;:'"()\-]+$/;
-
-  for (const category of CATEGORIES) {
-    PASSAGE_BANK[category].forEach((passage, index) => {
-      assert.match(
-        passage,
-        allowed,
-        `${category}[${index}] contains a character that cannot be typed`
-      );
-    });
+test('mixed draws balance categories and avoid repeats even after re-reading storage', async () => {
+  let backing = 'malformed json';
+  const storage = { getItem: () => backing, setItem: (_, value) => { backing = value; } };
+  assert.deepEqual(readPassageHistory(storage), []);
+  const counts = { Legal: 0, Professional: 0, General: 0 };
+  let previousId;
+  for (let seed = 0; seed < 3000; seed++) {
+    const history = readPassageHistory(storage);
+    const item = await generatePassage({ history, previousId, seconds: 60, seed });
+    assert.notEqual(item.id, previousId);
+    counts[item.category]++;
+    rememberPassage(item.id, history, storage);
+    assert.ok(readPassageHistory(storage).length <= 18);
+    previousId = item.id;
   }
-});
-
-test('every curated passage survives the custom-text sanitizer unchanged', () => {
-  // The custom-text path runs sanitizeForTyping; a bank passage must
-  // not be rewritten differently from how it is scored.
-  for (const category of CATEGORIES) {
-    PASSAGE_BANK[category].forEach((passage, index) => {
-      assert.equal(
-        sanitizeForTyping(passage),
-        passage,
-        `${category}[${index}] would be altered by sanitizeForTyping`
-      );
-    });
-  }
+  assert.deepEqual(Object.values(counts), [1000, 1000, 1000]);
+  assert.deepEqual(readPassageHistory({ getItem() { throw Error(); } }), []);
 });

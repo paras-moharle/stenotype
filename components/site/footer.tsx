@@ -2,47 +2,20 @@ import Link from 'next/link';
 import { Github } from 'lucide-react';
 import { Logo } from '@/components/site/logo';
 
-const footerLinks = [
-  { href: '/', label: 'Typing practice' },
-  { href: '/about', label: 'About' },
-];
-
 export function Footer() {
   return (
-    <footer className="border-t border-border bg-background">
-      <div className="container-page flex flex-col items-center justify-between gap-8 py-12 sm:flex-row">
+    <footer className="border-t border-border bg-surface">
+      <div className="container-typing flex flex-wrap items-center justify-between gap-x-8 gap-y-3 py-5">
         <Logo size="sm" />
-
-        <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
-          {footerLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {link.label}
-            </Link>
-          ))}
+        <nav aria-label="Footer" className="flex flex-wrap items-center gap-1">
+          <Link href="/" className="shell-nav-link">Typing practice</Link>
+          <Link href="/about" className="shell-nav-link">About</Link>
+          <a className="shell-nav-link" href="https://github.com/paras-moharle" target="_blank" rel="noopener noreferrer">
+            <Github className="size-4" aria-hidden /> GitHub
+          </a>
         </nav>
-
-        <a
-          href="https://github.com/paras-moharle"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <Github className="h-4 w-4" strokeWidth={1.5} />
-          paras-moharle
-        </a>
-      </div>
-      <div className="border-t border-border">
-        <div className="container-page py-4">
-          <p className="text-center text-xs text-muted-foreground">
-            &copy; {new Date().getFullYear()} StenoType. Built by Paras Moharle.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">Built by Paras Moharle.</p>
       </div>
     </footer>
   );
 }
-

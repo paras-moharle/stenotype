@@ -1,156 +1,63 @@
 # StenoType
 
-A typing/stenography practice app for students. Built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, Prisma 7, Better Auth, and Neon Postgres.
+StenoType is a typing and stenography practice workspace for students and the administrators who prepare their exercises. It supports short daily drills, practice with your own passages, and blind transcription from YouTube recordings. It is a practice platform without formal examination features.
 
-## Features
+## What you can do
 
-- **Typing practice** — Free typing, custom paste, and blind dictation modes
-- **Dictation-only results** — Only dictation attempts are saved; free practice and
-  custom text stay in the browser
-- **Server-side scoring** — Results computed on the server, never trusted from client
-- **Dictation management** — Admin uploads YouTube dictations with transcripts
-- **Student tracking** — Per-dictation attempt history and progress stats
-- **Admin-created accounts** — no public sign-up; an admin adds every student
-- **Secure auth** — Better Auth with single-session enforcement and login audit
-- **Admin controls** — Manage students and dictations, ban users, revoke sessions
+- **Free typing.** Practice with curated general, professional and legal passages. Choose a timed run, the first 30 words, or an untimed full passage.
+- **Custom typing.** Signed-in users can apply their own text and keep it visible or practice in Blind mode. Free and Custom attempts stay in the active browser session and are never saved as historical results.
+- **Dictation.** Students can browse published exercises, open YouTube externally, read the transcript for study, open past results, or start the exact exercise in Blind mode. The typing workspace hides the reference until evaluation. YouTube controls playback independently.
+- **Results.** Evaluated dictation attempts can be saved and reviewed against their historical reference. Attempted accuracy measures the items evaluated. Completion measures passage coverage.
+- **Administration.** Administrators manage students, account status, sessions, dictation transcripts and publication. Login auditing is best-effort and may be suspended by capacity protection.
+- **Responsive workspace.** The public site and workspaces support light and dark themes and adapt to phones, tiled windows and desktops.
 
-## Quick start
+## Architecture
 
-### Prerequisites
+Next.js App Router and React provide the public site and role-specific workspaces. TypeScript and Tailwind CSS support the application and shared UI. Better Auth handles sign-in and database-backed sessions. Prisma connects to PostgreSQL on Neon. Passage selection happens locally after the necessary content is loaded, and a worker handles browser alignment. Dictation evaluation and persistence are server-authoritative.
 
-- Node.js 22+
-- A [Neon](https://neon.tech) Postgres database (free tier)
+| Path | Responsibility |
+| --- | --- |
+| `app/` | Public, student and admin routes and API handlers |
+| `components/` | Workspace, typing, results and shared UI |
+| `lib/` | Authorization, database services, passage content and scoring |
+| `prisma/` | Schema, migration history and disposable seed commands |
+| `scripts/`, `tests/`, `docs/` | Operational tooling, regressions and runbooks |
 
-### Setup
+Public pages can be prerendered while the client still checks session status. Authorization is enforced on protected server routes and APIs.
 
-```bash
-# 1. Install dependencies (postinstall runs `prisma generate`)
-pnpm install
+## Development
 
-# 2. Copy env template and fill in your values
-cp .env.example .env.local
-# Edit .env.local — at minimum set DATABASE_URL, BETTER_AUTH_SECRET,
-# BETTER_AUTH_URL, and the seed account credentials.
+Use Node.js **22.12 or later in the 22.x line**, or **24 or later**, and pnpm **12.19.0**. CI uses Node 24. Development uses an approved, fully migrated disposable Neon database. Use existing disposable accounts.
 
-# 3. Create the database tables
-npx prisma migrate dev
+1. Create a private environment file without replacing an existing one:
 
-# 4. Seed the admin + student accounts
-npx prisma db seed
+   ```fish
+   test -e .env.local; or install -m 600 .env.example .env.local
+   ```
 
-# 5. Seed dictations
-node --env-file=.env.local --import tsx prisma/seed-dictations.ts
+2. Edit `.env.local` privately. Set `DATABASE_URL` to the approved direct disposable connection, `BETTER_AUTH_URL=http://localhost:3000`, and a local-only `BETTER_AUTH_SECRET` generated with `openssl rand -hex 32`. Remove conflicting shell exports. Keep credentials out of Git.
+3. Install and start:
 
-# 6. Start the dev server
-pnpm run dev
-```
+   ```fish
+   pnpm install --frozen-lockfile
+   and pnpm dev
+   ```
 
-Open [http://localhost:3000](http://localhost:3000) and sign in with the seed accounts from your `.env.local`.
+Installation generates the Prisma client and requires a datasource URL in the environment. Development startup verifies the database target, TLS, migration ledger and key schema requirements. Startup never migrates or seeds. For direct LAN access, configure an explicit trusted origin and bind address. For an HTTPS tunnel, use its exact public origin as `BETTER_AUTH_URL` and restart. The canonical HTTPS origin enables secure session cookies.
 
-## Environment variables
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Preflight and development server |
+| `pnpm typecheck`, `pnpm lint` | Static checks |
+| `pnpm test` | Offline regressions, with integration tests gated |
+| `pnpm build`, `pnpm start` | Generate Prisma and build, then serve production output |
+| `pnpm test:smoke`, `pnpm test:ui` | HTTP and Chromium verification with the documented environment |
+| `pnpm db:check-sync`, `pnpm db:verify` | Schema drift and integrity checks against an explicitly selected database |
 
-All secrets live in `.env.local` (gitignored). See `.env.example` for the full list.
+## Verification and release
 
-| Variable | Required | Purpose |
-|---|---|---|
-| `DATABASE_URL` | Yes | Neon Postgres connection string |
-| `BETTER_AUTH_SECRET` | Yes | Session signing secret (`openssl rand -base64 32`) |
-| `BETTER_AUTH_URL` | Yes | App URL (`http://localhost:3000` locally) |
-| `RESEND_API_KEY` | Step 7 | Email/OTP (Resend) |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Seed only | Initial admin account |
-| `STUDENT_EMAIL` / `STUDENT_PASSWORD` | Seed only | Initial student account |
-| `DEV_ORIGINS` | No | Extra dev-server origins (e.g. LAN IP) |
+GitHub Actions uses an isolated PostgreSQL service for migrations and authenticated tests. It also checks the production build, Chromium, capacity rejection, dependency advisories and secrets. Use the [verification guide](docs/engineering-verification.md) for local integration setup.
 
-## Scripts
+Production requires a managed HTTPS origin, an independent authentication secret, and a database with the complete migration history. Verify branch and database isolation for previews before pushing. Follow the [production runbook](docs/production-database-release.md) for the coordinated database and application cutover. The [promotion assessment](docs/database-promotion-assessment.md) documents a conditional alternative to migrating the original branch.
 
-| Command | What it does |
-|---|---|
-| `pnpm run dev` | Start the dev server |
-| `pnpm run build` | Production build (runs `prisma generate` first) |
-| `npm run lint` | ESLint |
-| `npm run typecheck` | TypeScript check |
-| `npm test` | Run tests (`tsx --test`) |
-| `npx prisma migrate dev` | Create + apply a migration |
-| `npx prisma db seed` | Seed admin + student accounts |
-| `npx prisma studio` | Visual database browser (http://localhost:5555) |
-
-## Free-tier posture
-
-Everything is designed to stay inside **Neon Free** and **Vercel Hobby** —
-no paid add-ons, no cron jobs, no image optimisation.
-
-| Resource | Current | Free limit |
-|---|---|---|
-| Database size (`neondb`) | ~9 MB | 0.5 GB |
-| Tables | 10 | — |
-| DB connections per instance | 5 | — |
-| Static pages | `/`, `/about`, `/login`, `/typing` | — |
-
-How that is kept in place:
-
-- **The home page is static.** Guest traffic never invokes a serverless
-  function and never wakes the database.
-- **One session read per page.** Protected layouts resolve it server-side and
-  seed the client, so there is no second `/api/auth/get-session` call.
-- **Dictation metadata is fetched lazily**, only when a signed-in user opens
-  dictation mode.
-- **Small connection pool** (5) with `allowExitOnIdle`, so Neon can suspend
-  between bursts.
-- **Every list is capped** (50 attempts, 100 admin rows) and attempt
-  submissions are rate limited.
-- **No billable services are installed** — no Vercel KV/Blob/Postgres/Edge
-  Config/Analytics, no `vercel.json` cron config.
-- `npm run db:check-sync` plus `tests/free-tier.test.mjs` fail the build if a
-  paid SDK, cron job, image optimisation or oversized pool is introduced.
-
-To check the database footprint at any time:
-
-```sql
-SELECT pg_size_pretty(pg_database_size('neondb'));
-```
-
-## Deploy to Vercel
-
-### 1. Set environment variables in Vercel dashboard
-
-| Variable | Value |
-|---|---|
-| `DATABASE_URL` | Your Neon connection string |
-| `BETTER_AUTH_SECRET` | Same as `.env.local` |
-| `BETTER_AUTH_URL` | `https://your-app.vercel.app` |
-| `RESEND_API_KEY` | Your Resend key (optional) |
-
-### 2. Push to GitHub
-
-```bash
-git add -A
-git commit -m "Your message"
-git push
-```
-
-Vercel auto-deploys on push. The build runs `prisma generate && next build`.
-
-### 3. Verify
-
-- Visit your Vercel URL
-- Try logging in with seed credentials
-- Check that `/api/auth/get-session` returns 200 (not 404/500)
-
-## Auth
-
-Better Auth with email/password and DB-backed sessions. **Public sign-up is
-disabled** (`lib/auth-config.ts`): accounts are created by an admin from
-`/admin/students`, or by the seed script. Single active session per user (a new
-sign-in revokes others). Every successful sign-in is written to the
-`LoginAttempt` audit table. Admins can ban users and revoke sessions.
-
-## Project structure
-
-```
-app/            Next.js App Router pages + API routes
-components/     React components (admin, student, typing, ui)
-lib/            Auth, DB, scoring engine, schemas, utilities
-prisma/         Prisma schema, migrations, seed
-tests/          Test files (tsx --test)
-```
-
+Provider plans, storage and compute are finite. Review [capacity assumptions](docs/neon-free-capacity.md), [practice content and timing](docs/practice-content.md), and [result semantics](docs/result-review-verification.md) for operational detail.

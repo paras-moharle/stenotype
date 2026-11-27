@@ -1,22 +1,34 @@
-import { headers } from 'next/headers';
+import { rejectStorageGrowth } from '@/lib/db-capacity';
+import { readJson } from '@/lib/mutation-request';
+import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/admin/require-admin';
 import { createStudentSchema } from '@/lib/admin/schemas';
 import { isUniqueViolation } from '@/lib/prisma-errors';
+import { pageSlice, parsePageParams } from '@/lib/pagination';
 
 /**
- * GET /api/admin/students
+ * GET /api/admin/students?limit=100&offset=0
  * POST /api/admin/students
  *
- * Admin-only: list students or create a new student account.
+ * Admin-only: list students (paged, capped at 200) or create one.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const gate = await requireAdmin();
   if (!gate.ok) return gate.response;
 
-  const students = await db.studentProfile.findMany({
+  const page = parsePageParams(request);
+  const query = new URL(request.url).searchParams.get('q')?.trim().slice(0, 200);
+
+  const rows = await db.studentProfile.findMany({
+    where: query ? {
+      user: { OR: [
+        { name: { contains: query, mode: 'insensitive' } },
+        { email: { contains: query, mode: 'insensitive' } },
+      ] },
+    } : undefined,
     include: {
       user: {
         select: {
@@ -33,18 +45,26 @@ export async function GET() {
         },
       },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: page.take + 1,
+    skip: page.skip,
   });
 
-  return NextResponse.json({ students });
+  const students = pageSlice(rows, page);
+
+  return NextResponse.json({
+    students,
+    page: { limit: page.limit, offset: page.offset, hasMore: page.hasMore(rows) },
+  });
 }
 
 export async function POST(request: Request) {
-  const gate = await requireAdmin();
+  const gate = await requireAdmin(request);
   if (!gate.ok) return gate.response;
 
-  const body = await request.json().catch(() => null);
-  const parsed = createStudentSchema.safeParse(body);
+  const body = await readJson(request, 16_384);
+  if (!body.ok) return body.response;
+  const parsed = createStudentSchema.safeParse(body.data);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -56,52 +76,46 @@ export async function POST(request: Request) {
   const { name, email, password } = parsed.data;
   const phone = parsed.data.phone?.trim() ? parsed.data.phone.trim() : null;
 
-  // `admin.createUser` creates the account WITHOUT signing it in — unlike
-  // `signUpEmail`, which used to leave a ghost session and a fake
-  // "successful login" audit row for every student the admin created.
-  let createdUserId: string | null = null;
+  const capacity = await rejectStorageGrowth();
+  if (capacity) return capacity;
 
   try {
-    // No explicit role: the admin plugin's `defaultRole` is already
-    // "student", and the typed API only allows the plugin's known roles.
-    const created = await auth.api.createUser({
-      body: { email, password, name },
-      headers: await headers(),
-    });
-
-    createdUserId = created.user.id;
-
-    const profile = await db.studentProfile.create({
+    const id = randomUUID();
+    const passwordHash = await (await auth.$context).password.hash(password);
+    const student = await db.studentProfile.create({
       data: {
-        userId: createdUserId,
         phone,
-      },
-      include: {
         user: {
-          select: { id: true, name: true, email: true, banned: true },
+          create: {
+            id,
+            name,
+            email: email.toLowerCase(),
+            role: 'student',
+            accounts: {
+              create: {
+                id: randomUUID(),
+                accountId: id,
+                providerId: 'credential',
+                password: passwordHash,
+              },
+            },
+          },
         },
       },
+      include: {
+        user: { select: { id: true, name: true, email: true, banned: true } },
+      },
     });
 
-    return NextResponse.json({ student: profile }, { status: 201 });
+    return NextResponse.json({ student }, { status: 201 });
   } catch (error) {
-    // Never leave a user without a profile behind.
-    if (createdUserId) {
-      await db.user
-        .delete({ where: { id: createdUserId } })
-        .catch(() => undefined);
-    }
-
-    const message =
-      error instanceof Error ? error.message : 'Failed to create student';
-
-    if (isUniqueViolation(error) || /already exists/i.test(message)) {
+    if (isUniqueViolation(error)) {
       return NextResponse.json(
         { error: 'A user with this email already exists.' },
         { status: 409 }
       );
     }
 
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: 'Failed to create student.' }, { status: 500 });
   }
 }

@@ -31,6 +31,9 @@ export default function LoginPage() {
     if (signOutFailed) {
       // The session cookie is still alive, so auto-redirecting would
       // silently sign the user back in. Explain instead.
+      // The query string is only available after mount, so the notice is
+      // derived here rather than during render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setNotice(
         "We couldn't sign you out — your session is still active. Please try again."
       );
@@ -66,27 +69,34 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="container-page flex min-h-[calc(100vh-10rem)] items-center justify-center py-16">
+    <div className="container-page relative isolate flex min-h-[calc(100vh-10rem)] items-center justify-center py-16">
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-surface/50 px-4 py-2 text-sm text-muted-foreground transition-all hover:border-brand/30 hover:text-foreground"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             Back to home
           </Link>
         </div>
 
-        <div className="rounded-[2rem] border border-border bg-surface p-8 shadow-2xl animate-scale-in">
+        <div className="card-sheen rounded-3xl border border-border bg-surface p-5 shadow-card sm:p-8">
           <div className="mb-8 flex items-center gap-3">
-            <LogIn className="h-6 w-6 text-brand" strokeWidth={1.8} />
-            <h1 className="text-2xl font-bold text-foreground">Sign in</h1>
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-soft text-brand ring-1 ring-brand/20">
+              <LogIn className="h-5 w-5" strokeWidth={1.7} />
+            </span>
+            <div>
+              <h1 className="editorial-title text-foreground">Sign in</h1>
+              <p className="text-sm text-muted-foreground">
+                Welcome back to your practice space.
+              </p>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-1.5">
-              <label htmlFor="email" className="text-sm font-medium text-foreground">
+              <label htmlFor="email" className="field-label">
                 Email
               </label>
               <input
@@ -96,14 +106,15 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
-                className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20 transition-all"
+                required
+                className="field h-12"
               />
             </div>
 
             <div className="space-y-1.5">
               <label
                 htmlFor="password"
-                className="text-sm font-medium text-foreground"
+                className="field-label"
               >
                 Password
               </label>
@@ -115,12 +126,13 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
-                  className="h-12 w-full rounded-2xl border border-border bg-background pl-4 pr-12 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20 transition-all"
+                  required
+                  className="field h-12 pl-4 pr-12"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                  className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? (
@@ -159,9 +171,14 @@ export default function LoginPage() {
               {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
+
+          <p className="mt-5 text-center text-sm text-muted-foreground">
+            Accounts are created by an administrator. Ask your admin if you
+            need access.
+          </p>
         </div>
 
-        <p className="mt-6 text-center text-xs text-muted-foreground">
+        <p className="mt-6 text-center text-sm text-muted-foreground">
           Just want to try typing?{' '}
           <Link
             href="/"

@@ -21,17 +21,17 @@ export function AdminTable<T>({
   className,
 }: AdminTableProps<T>) {
   return (
-    <div
+    <div role="region" aria-label="Scrollable results table" tabIndex={0}
       className={cn(
-        'overflow-x-auto rounded-lg border border-border',
+        'table-wrap',
         className
       )}
     >
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-border bg-surface/60">
+          <tr className="table-head border-b border-border">
             {columns.map((col) => (
-              <th
+              <th scope="col"
                 key={col.key}
                 className={cn(
                   'whitespace-nowrap px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground',
@@ -47,7 +47,7 @@ export function AdminTable<T>({
           {rows.map((row) => (
             <tr
               key={rowKey(row)}
-              className="border-b border-border/60 transition-colors last:border-b-0 hover:bg-surface/40"
+              className="table-row"
             >
               {columns.map((col) => (
                 <td

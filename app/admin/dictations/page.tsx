@@ -1,7 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { Modal } from '@/components/ui/modal';
+
+import { useState } from 'react';
 import { Plus, X, Trash2, Pencil } from 'lucide-react';
+import { useAdminList } from '@/components/admin/use-admin-list';
+import { AdminListPagination } from '@/components/admin/admin-list-pagination';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
 import { AdminSearch } from '@/components/admin/admin-search';
@@ -13,9 +17,7 @@ type Dictation = {
   title: string;
   category: string;
   status: string;
-  referenceTranscript: string;
   youtubeId: string | null;
-  durationSeconds: number | null;
   createdAt: string;
 };
 
@@ -36,41 +38,28 @@ const blankForm: FormState = {
 };
 
 export default function AdminDictationsPage() {
-  const [query, setQuery] = useState('');
-  const [dictations, setDictations] = useState<Dictation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const list = useAdminList<Dictation>('dictations');
+  const { query, rows: filtered, loading } = list;
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingVersion, setEditingVersion] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(blankForm);
   const [error, setError] = useState<string | null>(null);
+  const [originalForm, setOriginalForm] = useState<FormState>(blankForm);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  function dismissEditor() {
+    if (saving) return;
+    if (JSON.stringify(originalForm) !== JSON.stringify(form) && !window.confirm('Discard unsaved changes?')) return;
+    setShowForm(false);
+    setEditingId(null);
+  }
   const [toast, setToast] = useState<string | null>(null);
-
-  const fetchDictations = useCallback(async () => {
-    try {
-      const res = await fetch('/api/admin/dictations');
-      if (res.ok) {
-        const data = await res.json();
-        setDictations(data.dictations);
-      }
-    } catch {
-      setError('Failed to load dictations');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchDictations();
-  }, [fetchDictations]);
-
-  const filtered = dictations.filter(
-    (d) =>
-      d.title.toLowerCase().includes(query.toLowerCase()) ||
-      d.category.toLowerCase().includes(query.toLowerCase())
-  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
+    setSaving(true);
     setError(null);
 
     try {
@@ -85,6 +74,7 @@ export default function AdminDictationsPage() {
         body: JSON.stringify({
           ...form,
           youtubeId: form.youtubeId || null,
+          ...(editingId && editingVersion ? { expectedUpdatedAt: editingVersion } : {}),
         }),
       });
 
@@ -97,27 +87,45 @@ export default function AdminDictationsPage() {
       setShowForm(false);
       setEditingId(null);
       setForm(blankForm);
-      fetchDictations();
+      list.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save dictation');
+    } finally { setSaving(false); }
+  };
+
+  const [loadingEdit, setLoadingEdit] = useState(false);
+  const handleEdit = async (dictation: Dictation) => {
+    if (loadingEdit) return;
+    setLoadingEdit(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/admin/dictations/${dictation.id}`);
+      if (!response.ok) throw new Error();
+      const { dictation: details } = await response.json();
+      setEditingId(details.id);
+      setEditingVersion(details.updatedAt);
+      const nextForm = {
+        title: details.title,
+        category: details.category,
+        referenceTranscript: details.referenceTranscript,
+        youtubeId: details.youtubeId ?? '',
+        status: details.status,
+      };
+      setOriginalForm(nextForm);
+      setForm(nextForm);
+      setShowForm(true);
+    } catch {
+      setError('Could not load this dictation for editing.');
+    } finally {
+      setLoadingEdit(false);
     }
   };
 
-  const handleEdit = (dictation: Dictation) => {
-    setEditingId(dictation.id);
-    setForm({
-      title: dictation.title,
-      category: dictation.category,
-      referenceTranscript: dictation.referenceTranscript,
-      youtubeId: dictation.youtubeId ?? '',
-      status: dictation.status,
-    });
-    setShowForm(true);
-  };
-
   const handleDelete = async (dictation: Dictation) => {
-    if (!confirm(`Delete "${dictation.title}"?`)) return;
+    if (deleting || saving || !confirm(`Delete "${dictation.title}"?`)) return;
 
+    setDeleting(dictation.id);
+    setError(null);
     try {
       const res = await fetch(`/api/admin/dictations/${dictation.id}`, {
         method: 'DELETE',
@@ -129,12 +137,12 @@ export default function AdminDictationsPage() {
       }
 
       setToast('Dictation deleted');
-      fetchDictations();
+      list.reload();
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Failed to delete dictation'
       );
-    }
+    } finally { setDeleting(null); }
   };
 
   const columns = [
@@ -157,8 +165,8 @@ export default function AdminDictationsPage() {
         <span
           className={
             d.status === 'PUBLISHED'
-              ? 'text-green-500 font-medium'
-              : 'text-yellow-500 font-medium'
+              ? 'text-success font-medium'
+              : 'text-warning font-medium'
           }
         >
           {d.status}
@@ -174,7 +182,7 @@ export default function AdminDictationsPage() {
             href={`https://youtube.com/watch?v=${d.youtubeId}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-500 hover:underline"
+            className="text-brand hover:underline"
           >
             Watch
           </a>
@@ -188,16 +196,20 @@ export default function AdminDictationsPage() {
       render: (d: Dictation) => (
         <div className="flex gap-2">
           <Button
-            size="sm"
+            size="icon"
             variant="outline"
+            disabled={loadingEdit}
             onClick={() => handleEdit(d)}
+            aria-label={`Edit ${d.title}`}
             title="Edit"
           >
             <Pencil className="h-4 w-4" />
           </Button>
           <Button
-            size="sm"
+            size="icon"
             variant="outline"
+            disabled={Boolean(deleting) || saving}
+            aria-label={`Delete ${d.title}`}
             onClick={() => handleDelete(d)}
             title="Delete"
           >
@@ -215,8 +227,10 @@ export default function AdminDictationsPage() {
         description="Upload and manage dictation exercises"
         action={
           <Button
+            disabled={loadingEdit || saving}
             onClick={() => {
               setEditingId(null);
+              setOriginalForm(blankForm);
               setForm(blankForm);
               setShowForm(true);
             }}
@@ -229,22 +243,22 @@ export default function AdminDictationsPage() {
 
       <AdminSearch
         value={query}
-        onChange={setQuery}
+        onChange={list.changeQuery}
         placeholder="Search dictations..."
       />
 
-      {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-500">
+      {error && !showForm && (
+        <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-destructive">
           {error}
         </div>
       )}
 
       {toast && (
-        <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-green-500">
+        <div className="rounded-2xl border border-success/30 bg-success/10 p-4 text-success">
           {toast}
           <button
             onClick={() => setToast(null)}
-            className="ml-2 text-green-500 hover:text-green-400"
+            className="ml-2 text-success hover:text-success"
           >
             <X className="h-4 w-4" />
           </button>
@@ -254,6 +268,11 @@ export default function AdminDictationsPage() {
       {loading ? (
         <div className="text-center py-8 text-muted-foreground">
           Loading dictations...
+        </div>
+      ) : list.error ? (
+        <div role="alert" className="space-y-2 text-sm text-destructive">
+          <p>{list.error}</p>
+          <Button variant="outline" size="sm" onClick={list.reload}>Retry</Button>
         </div>
       ) : filtered.length === 0 ? (
         <AdminEmptyState
@@ -268,10 +287,10 @@ export default function AdminDictationsPage() {
               <Button
                 onClick={() => {
                   setEditingId(null);
-                  setForm(blankForm);
+                  setOriginalForm(blankForm);
+              setForm(blankForm);
                   setShowForm(true);
                 }}
-                className="rounded-lg"
               >
                 Upload dictation
               </Button>
@@ -286,46 +305,49 @@ export default function AdminDictationsPage() {
         />
       )}
 
+      <AdminListPagination page={list.page} more={list.more} onPage={list.setPage} />
+
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-2xl rounded-lg bg-background p-6 max-h-[90vh] overflow-y-auto">
+        <Modal title={editingId ? "Edit dictation" : "New dictation"} onClose={dismissEditor} className="max-w-2xl">
+          <div className="p-5 sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold">
                 {editingId ? 'Edit Dictation' : 'Upload Dictation'}
               </h2>
               <Button
                 variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setShowForm(false);
-                  setEditingId(null);
-                }}
+                size="icon"
+                type="button"
+                disabled={saving}
+                onClick={dismissEditor}
+                aria-label="Close editor"
               >
                 <X className="h-4 w-4" />
               </Button>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
               <div>
-                <label htmlFor="dict-title" className="mb-1 block text-sm font-medium">Title</label>
+                <label htmlFor="dict-title" className="field-label">Title</label>
                 <input
                   id="dict-title"
                   type="text"
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  className="field"
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label htmlFor="dict-category" className="mb-1 block text-sm font-medium">Category</label>
+                  <label htmlFor="dict-category" className="field-label">Category</label>
                   <select
                     id="dict-category"
                     value={form.category}
                     onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2"
+                    className="field"
                   >
                     <option value="LEGAL">Legal</option>
                     <option value="PROFESSIONAL">Professional</option>
@@ -334,71 +356,70 @@ export default function AdminDictationsPage() {
                 </div>
 
                 <div>
-                  <label htmlFor="dict-status" className="mb-1 block text-sm font-medium">Status</label>
+                  <label htmlFor="dict-status" className="field-label">Status</label>
                   <select
                     id="dict-status"
                     value={form.status}
                     onChange={(e) => setForm({ ...form, status: e.target.value })}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2"
+                    className="field"
                   >
                     <option value="DRAFT">Draft</option>
                     <option value="PUBLISHED">Published</option>
+                    {editingId && <option value="ARCHIVED">Archived</option>}
                   </select>
                 </div>
               </div>
 
               <div>
-                <label htmlFor="dict-youtube" className="mb-1 block text-sm font-medium">
-                  YouTube Video ID (optional)
+                <label htmlFor="dict-youtube" className="field-label">
+                  YouTube link or video ID (optional)
                 </label>
                 <input
                   id="dict-youtube"
                   type="text"
                   value={form.youtubeId}
                   onChange={(e) => setForm({ ...form, youtubeId: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2"
+                  className="field"
                   placeholder="e.g. dQw4w9WgXcQ"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Just the video ID from the YouTube URL
+                  Paste a YouTube watch, Shorts, live or share link, or the video ID.
                 </p>
               </div>
 
               <div>
-                <label htmlFor="dict-transcript" className="mb-1 block text-sm font-medium">Transcript</label>
+                <label htmlFor="dict-transcript" className="field-label">Transcript</label>
                 <textarea
                   id="dict-transcript"
                   value={form.referenceTranscript}
                   onChange={(e) =>
                     setForm({ ...form, referenceTranscript: e.target.value })
                   }
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 min-h-40"
+                  className="field h-auto min-h-48 resize-y py-3 font-mono"
                   required
-                  rows={8}
+                  rows={9}
+                  maxLength={50_000}
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
-                  The text students will type against. This is never shown to students before they complete the dictation.
+                  {form.referenceTranscript.length} / 50,000 draft characters. Published transcripts are available for study in the library and hidden during blind typing.
                 </p>
               </div>
 
               <div className="flex gap-2 pt-2">
-                <Button type="submit" className="flex-1">
-                  {editingId ? 'Update Dictation' : 'Create Dictation'}
+                <Button type="submit" className="flex-1" disabled={saving}>
+                  {saving ? 'Saving…' : editingId ? 'Update dictation' : 'Create dictation'}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => {
-                    setShowForm(false);
-                    setEditingId(null);
-                  }}
+                  onClick={dismissEditor}
                 >
                   Cancel
                 </Button>
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

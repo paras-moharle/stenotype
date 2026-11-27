@@ -1,7 +1,5 @@
-import { redirect } from 'next/navigation';
-import { StudentTopbar } from '@/components/student/student-topbar';
+import { requireStudentPage } from '@/lib/student-session';
 import { StudentShell } from '@/components/student/student-shell';
-import { getCurrentUser } from '@/lib/session';
 import { AuthProvider } from '@/lib/auth-provider';
 
 /**
@@ -23,13 +21,7 @@ export default async function StudentLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const current = await getCurrentUser();
-  if (!current) {
-    redirect('/login');
-  }
-  if (current.role !== 'student' || current.banned) {
-    redirect('/login?denied=1');
-  }
+  const { user: current } = await requireStudentPage();
 
   return (
     <AuthProvider
@@ -43,7 +35,6 @@ export default async function StudentLayout({
       }}
     >
       <div className="flex min-h-screen flex-col">
-        <StudentTopbar />
         <StudentShell>{children}</StudentShell>
       </div>
     </AuthProvider>

@@ -286,9 +286,8 @@ export function countScoredWords(text: string): number {
  * mistyped word tied with a cross-kind substitution and the DP could
  * charge the word to the punctuation slot ("dog. Don't" typed as
  * "dog Dont" reported the period as wrong and "Don't" as missed).
- * Charging 2 makes "delete the punctuation, substitute the word"
- * (1 + 1) strictly cheaper than "substitute the punctuation with the
- * word" (2), which is the attribution a reader expects.
+ * Charging 2 makes the cross-kind substitution no cheaper than separate
+ * edits. Traceback prefers same-kind substitutions and separate edits.
  */
 function tokenSubstitutionCost(referenceToken: Token, typedToken: Token): number {
   if (referenceToken.text === typedToken.text) return 0;

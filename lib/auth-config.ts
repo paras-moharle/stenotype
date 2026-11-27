@@ -43,3 +43,9 @@ export const rateLimitConfig: BetterAuthRateLimitOptions = {
     '/sign-out': false,
   },
 };
+
+// The browser only uses these Better Auth endpoints. Application management
+// retains its own role, provisioning and target-account policy.
+export function isPublicAuthPath(pathname: string): boolean {
+  return /^\/api\/auth\/(?:get-session|sign-in\/email|sign-out)\/?$/.test(pathname);
+}

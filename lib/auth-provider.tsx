@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 
-import { messageFrom } from './auth-errors';
+import { signInFailure } from './auth-errors';
 
 export type AppUser = {
   id: string;
@@ -23,7 +23,6 @@ type AuthContextValue = {
   user: AppUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  refresh: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<AppUser>;
   signOut: () => Promise<void>;
 };
@@ -103,6 +102,8 @@ export function AuthProvider({
 
   useEffect(() => {
     if (seeded) return;
+    // The provider is seeded once per mount; refresh() writes the result.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
   }, [seeded, refresh]);
 
@@ -129,34 +130,24 @@ export function AuthProvider({
    * so the dashboard renders straight away.
    */
   const signIn = useCallback(async (email: string, password: string) => {
-    const res = await fetch('/api/auth/sign-in/email', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-
-      if (res.status === 429) {
-        throw new Error(
-          messageFrom(
-            data,
-            'Too many sign-in attempts. Please wait a few seconds and try again.'
-          )
-        );
-      }
-
-      throw new Error(
-        messageFrom(data, 'Invalid email or password')
-      );
+    let res: Response;
+    try {
+      res = await fetch('/api/auth/sign-in/email', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+    } catch {
+      throw new Error('Could not reach StenoType. Check your connection and try again.');
     }
+
+    if (!res.ok) throw new Error(signInFailure(res.status, await res.json().catch(() => null)));
 
     const data = await res.json();
     const signedIn = data?.user as AppUser | undefined;
     if (!signedIn) {
-      throw new Error('Sign in succeeded but no user was returned.');
+      throw new Error('Sign-in is temporarily unavailable. Try again shortly.');
     }
     setUser(signedIn);
 
@@ -195,7 +186,7 @@ export function AuthProvider({
     };
 
     const signedOut =
-      (await attempt('/api/auth/sign-out')) || (await attempt('/api/logout'));
+      await attempt('/api/auth/sign-out');
 
     if (!signedOut) {
       // Do NOT pretend the session ended. The cookie is HttpOnly, so a
@@ -221,11 +212,10 @@ export function AuthProvider({
       user,
       isAuthenticated: user !== null,
       isLoading,
-      refresh,
       signIn,
       signOut,
     }),
-    [user, isLoading, refresh, signIn, signOut]
+    [user, isLoading, signIn, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

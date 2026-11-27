@@ -26,7 +26,8 @@ test('getCurrentUser does not run a second user query', () => {
 test('the home page does not read the session on the server', () => {
   const source = read('app/(public)/page.tsx');
   assert.doesNotMatch(source, /getSession/);
-  assert.doesNotMatch(source, /async function/);
+  assert.doesNotMatch(source, /fetch\(|@\/lib\/db/);
+  assert.match(source, /export const revalidate = 60/);
 });
 
 test('protected layouts seed the client provider from the server session', () => {

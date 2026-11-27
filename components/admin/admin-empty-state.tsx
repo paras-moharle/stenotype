@@ -19,11 +19,11 @@ export function AdminEmptyState({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface/30 px-6 py-16 text-center',
+        'flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface/30 px-6 py-16 text-center',
         className
       )}
     >
-      <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-muted-foreground">
+      <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-soft text-brand ring-1 ring-brand/20">
         {icon ?? <Inbox className="h-4 w-4" strokeWidth={1.5} />}
       </div>
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>

@@ -1,33 +1,17 @@
+import { developmentOrigins, exactOrigin } from './auth-origins';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { admin } from 'better-auth/plugins';
 import { db } from './db';
+import { getStorageCapacity } from './db-capacity';
+import { maintainDuringTraffic } from './db-maintenance';
 import { rateLimitConfig, signUpPolicy } from './auth-config';
 
-// ─────────────────────────────────────────────────────────────
-// Better Auth — email/password + DB sessions + admin plugin.
-//
-// Your requirements, enforced here:
-//  - No credential sharing → single active session. Every new
-//    sign-in revokes that user's other sessions (see the
-//    databaseHooks below). The cookie cache is DISABLED so a
-//    revoked session is invalid immediately — no 5-minute window
-//    where two devices share one account.
-//  - Full admin visibility → every successful sign-in is written
-//    to the LoginAttempt audit table.
-//  - Lockout → the admin plugin's `banned` flag; a banned user
-//    cannot sign in. Rate limiting is configured explicitly.
-//  - Session lifetime → 7-day absolute, refreshed on activity.
-//
-// NOTE: auditing lives in databaseHooks (not the `hooks` API)
-// because the `hooks` dispatcher crashes when auth is invoked
-// programmatically (e.g. from server components calling
-// getSession, or the seed script) without an HTTP request
-// context. Failed sign-in recording needs a custom wrapper
-// route — tracked for Step 6 (admin UI).
-// ─────────────────────────────────────────────────────────────
-
+// The database trigger atomically replaces the prior session. The auth
+// hook is exclusively for best-effort audit logging.
 export const auth = betterAuth({
+  baseURL: exactOrigin(process.env.BETTER_AUTH_URL),
+  trustedOrigins: developmentOrigins(),
   database: prismaAdapter(db, {
     provider: 'postgresql',
   }),
@@ -42,7 +26,7 @@ export const auth = betterAuth({
   },
 
   session: {
-    // 7-day absolute lifetime; expiry slides forward on activity
+    // 7-day expiry slides forward on activity
     // (updateAge) so an active user is not kicked mid-test.
     expiresIn: 60 * 60 * 24 * 7,
     updateAge: 60 * 60 * 4,
@@ -61,9 +45,8 @@ export const auth = betterAuth({
 
   advanced: {
     ipAddress: {
-      // Trust X-Forwarded-For so each real client gets its own
-      // rate-limit bucket (behind Vercel/proxies).
-      ipAddressHeaders: ['x-forwarded-for'],
+      // Only Vercel's platform-provided address is used for IP buckets.
+      ipAddressHeaders: process.env.VERCEL === '1' ? ['x-vercel-forwarded-for'] : [],
     },
   },
 
@@ -79,42 +62,15 @@ export const auth = betterAuth({
     session: {
       create: {
         async after(session) {
-          // Single active session: revoke every other session for
-          // this user so a shared password cannot be used from
-          // two places at once. Guarded so a transient DB failure
-          // never turns a successful sign-in into a 500.
-          //
-          // The revocation and the email lookup are independent, so
-          // run them together — sign-in latency is one round-trip
-          // shorter on a cold connection.
-          const [, user] = await Promise.all([
-            db.session
-              .deleteMany({
-                where: {
-                  userId: session.userId,
-                  id: { not: session.id },
-                },
-              })
-              .catch(() => null),
-            db.user
-              .findUnique({
-                where: { id: session.userId },
-                select: { email: true },
-              })
-              .catch(() => null),
-          ]);
-
-          // Audit the successful sign-in.
           try {
-            await db.loginAttempt.create({
-              data: {
-                email: user?.email ?? 'unknown',
-                userId: session.userId,
-                success: true,
-                ipAddress: session.ipAddress ?? null,
-                userAgent: session.userAgent ?? null,
-              },
-            });
+            await maintainDuringTraffic();
+            if ((await getStorageCapacity()).level === 'restricted') return;
+            await db.$executeRaw`
+              INSERT INTO "LoginAttempt" ("id", "email", "userId", "success", "ipAddress", "userAgent")
+              SELECT gen_random_uuid()::text, "email", "id", true,
+                     ${session.ipAddress?.slice(0, 64) ?? null}, ${session.userAgent?.slice(0, 512) ?? null}
+              FROM "user" WHERE "id" = ${session.userId}
+            `;
           } catch {
             // Audit logging must never break sign-in.
           }

@@ -98,3 +98,13 @@ Café owners in Straße disagree; 1½ cups later, they don’t care.`;
 test('custom text is never persisted', () => {
   assert.equal(persistsAttempt({ mode: 'custom', dictationId: 'abc' }), false);
 });
+
+test('maximum-length supported custom practice scores without truncation', () => {
+  const unit = 'A calm writer checks figures, names and punctuation. ';
+  const original = unit.repeat(Math.ceil(MAX_CUSTOM_CHARS / unit.length))
+    .slice(0, MAX_CUSTOM_CHARS - 1) + 'x';
+  const check = inspectCustomText(original);
+  assert.equal(check.ok, true);
+  assert.equal(check.chars, MAX_CUSTOM_CHARS);
+  assert.equal(computeScore(check.text, check.text, 60_000).completion, 100);
+});

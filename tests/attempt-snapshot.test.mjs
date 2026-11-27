@@ -36,9 +36,16 @@ test('the snapshot copies every engine number', () => {
     assert.equal(snap.punctuationExtra, score.punctuation.extra);
     assert.equal(snap.punctuationMissed, score.punctuation.missed);
     assert.equal(snap.punctuationTotal, score.punctuation.total);
-    assert.equal(snap.correctCharacters, score.correct);
-    assert.equal(snap.incorrectCharacters, score.errors);
   }
+});
+
+test('the snapshot no longer carries the legacy character counters', () => {
+  const snap = attemptSnapshot(
+    computeScore('The cat sat on the mat', 'The cat sat', 30_000)
+  );
+
+  assert.equal('correctCharacters' in snap, false);
+  assert.equal('incorrectCharacters' in snap, false);
 });
 
 test('snapshot rows satisfy the breakdown invariants', () => {

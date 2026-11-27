@@ -14,14 +14,16 @@
 
 import { z } from 'zod';
 
-/** Engine cap (MAX_ALIGN_CHARS) + the client's legal overshoot. */
-const MAX_TYPED_CHARS = 20_040;
+import { MAX_ALIGN_CHARS } from './typing/scoring';
+
+const MAX_TYPED_CHARS = MAX_ALIGN_CHARS;
 
 export const attemptSubmissionSchema = z.object({
   /** Published dictation being transcribed; the server fetches its text. */
-  passageId: z.string().min(1, 'A dictation is required'),
+  passageId: z.string().min(1, 'A dictation is required').max(128),
+  submissionKey: z.uuid(),
   /** Exactly what the student typed. */
   typed: z.string().max(MAX_TYPED_CHARS),
   /** Wall-clock time from first keystroke to submit. */
-  elapsedMs: z.number().int().nonnegative(),
+  elapsedMs: z.number().int().nonnegative().max(2_147_483_647),
 });

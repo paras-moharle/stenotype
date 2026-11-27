@@ -1,118 +1,102 @@
-'use client';
-
-import { useState, useEffect } from 'react';
+import { validDictationId } from '@/lib/dictation-catalog';
+import Link from 'next/link';
 import { formatISTDateTime } from '@/lib/datetime';
 import { StudentHeader } from '@/components/student/student-header';
 
-type Attempt = {
-  id: string;
-  wpm: number;
-  accuracy: number;
-  completion: number;
-  wordsCorrect: number;
-  wordsIncorrect: number;
-  wordsExtra: number;
-  wordsMissed: number;
-  wordsTotal: number;
-  punctuationCorrect: number;
-  punctuationIncorrect: number;
-  punctuationExtra: number;
-  punctuationMissed: number;
-  punctuationTotal: number;
-  completed: boolean;
-  createdAt: string;
-  dictation: { id: string; title: string; category: string } | null;
-};
+import { db } from '@/lib/db';
+import { dictationAttemptsWhere, dictationAttemptStats, dictationHistorySelect } from '@/lib/dictation-history';
+import { requireStudentPage } from '@/lib/student-session';
+import { parsePageNumber } from '@/lib/pagination';
+import { ResultsPagination } from '@/components/ui/results-pagination';
 
-export default function StudentResultsPage() {
-  const [attempts, setAttempts] = useState<Attempt[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+const PAGE_SIZE = 50;
 
-  useEffect(() => {
-    fetch('/api/student/attempts')
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to load results');
-        return res.json();
-      })
-      .then((data) => {
-        setAttempts(data.attempts);
-      })
-      .catch(() => {
-        setError('Failed to load results');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, []);
-
-  const stats = attempts.length > 0 ? {
-    total: attempts.length,
-    avgWpm: Math.round(
-      attempts.reduce((sum, a) => sum + a.wpm, 0) / attempts.length
-    ),
-    avgAccuracy: Math.round(
-      attempts.reduce((sum, a) => sum + a.accuracy, 0) / attempts.length
-    ),
-    bestWpm: Math.max(...attempts.map((a) => a.wpm)),
-  } : null;
+export default async function StudentResultsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string | string[]; dictationId?: string }>;
+}) {
+  const { profile } = await requireStudentPage();
+  const params = await searchParams;
+  const page = parsePageNumber(params.page);
+  const dictationId = typeof params.dictationId === 'string' && validDictationId(params.dictationId) ? params.dictationId : undefined;
+  const [rows, stats] = await Promise.all([
+    db.typingAttempt.findMany({
+      where: { ...dictationAttemptsWhere, studentId: profile.id, ...(dictationId ? { dictationId } : {}) },
+      select: dictationHistorySelect,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: PAGE_SIZE + 1,
+      skip: (page - 1) * PAGE_SIZE,
+    }),
+    dictationId ? null : dictationAttemptStats(profile.id),
+  ]);
+  const attempts = rows.slice(0, PAGE_SIZE);
 
   return (
     <div className="space-y-8">
       <StudentHeader
         title="My results"
-        description="Your typing practice history."
+        description="Saved dictation scores and historical transcription reviews."
       />
 
-      {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-500">
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="text-center py-8 text-muted-foreground">
-          Loading results...
-        </div>
-      ) : attempts.length === 0 ? (
-        <div className="rounded-lg border border-border p-8 text-center text-muted-foreground">
-          No results yet. Complete a dictation to see your scores here.
+      {dictationId && <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span>{attempts[0]?.dictation?.title ?? 'Selected dictation'}</span>
+        <Link href="/student/results" className="text-brand underline">All results</Link>
+        <Link href="/student/dictations" className="text-brand underline">Dictation library</Link>
+      </div>}
+      {attempts.length === 0 ? (
+        <div className="card-sheen rounded-3xl border border-dashed border-border bg-surface/30 px-6 py-14 text-center">
+          <p className="text-sm text-muted-foreground">
+            {page === 1 && dictationId ? 'You have no saved attempts for this dictation.' : page === 1 ? 'Complete a dictation to see your scores here.' : 'No results on this page.'}
+          </p>
         </div>
       ) : (
         <>
           {/* Summary stats */}
-          {stats && (
+          {stats && stats.totalAttempts > 0 && (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-lg border border-border p-4">
-                <div className="text-2xl font-bold">{stats.total}</div>
+              <div className="stat card-sheen p-4">
+                <div className="stat-value text-brand">{stats.totalAttempts}</div>
                 <div className="text-sm text-muted-foreground">
-                  Attempts shown (latest 50)
+                  All attempts
                 </div>
               </div>
-              <div className="rounded-lg border border-border p-4">
-                <div className="text-2xl font-bold">{stats.avgWpm}</div>
-                <div className="text-sm text-muted-foreground">Avg WPM</div>
+              <div className="stat card-sheen p-4">
+                <div className="stat-value text-brand">{stats.avgWpm}</div>
+                <div className="text-sm text-muted-foreground">Avg net WPM</div>
               </div>
-              <div className="rounded-lg border border-border p-4">
-                <div className="text-2xl font-bold">{stats.avgAccuracy}%</div>
-                <div className="text-sm text-muted-foreground">Avg accuracy</div>
+              <div className="stat card-sheen p-4">
+                <div className="stat-value text-brand">{stats.avgAccuracy}%</div>
+                <div className="text-sm text-muted-foreground">Avg attempted accuracy</div>
               </div>
-              <div className="rounded-lg border border-border p-4">
-                <div className="text-2xl font-bold">{stats.bestWpm}</div>
-                <div className="text-sm text-muted-foreground">Best WPM</div>
+              <div className="stat card-sheen p-4">
+                <div className="stat-value text-brand">{stats.bestWpm}</div>
+                <div className="text-sm text-muted-foreground">Best net WPM</div>
               </div>
             </div>
           )}
 
+          <ul className="divide-y divide-border rounded-xl border border-border bg-surface md:hidden">
+            {attempts.map((attempt) => (
+              <li key={attempt.id}>
+                <Link prefetch={false} href={`/student/results/${attempt.id}`} className="block p-4 hover:bg-accent">
+                  <span className="block font-semibold">{attempt.dictation?.title ?? 'Dictation result'}</span>
+                  <span className="block text-sm text-muted-foreground">{formatISTDateTime(attempt.createdAt)}</span>
+                  <span className="mt-2 block text-sm">{attempt.wpm} net WPM · {attempt.accuracy}% attempted accuracy · {attempt.completion}% complete</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+
           {/* Attempts table */}
-          <div className="overflow-x-auto rounded-lg border border-border">
+          <div className="table-wrap hidden md:block" role="region" aria-label="Saved dictation results" tabIndex={0}>
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-muted/50">
+                <tr className="table-head border-b border-border">
                   <th className="px-4 py-3 text-left font-medium">Date</th>
                   <th className="px-4 py-3 text-left font-medium">Dictation</th>
-                  <th className="px-4 py-3 text-left font-medium">WPM</th>
-                  <th className="px-4 py-3 text-left font-medium">Accuracy</th>
+                  <th className="px-4 py-3 text-left font-medium">Net WPM</th>
+                  <th className="px-4 py-3 text-left font-medium">Attempted accuracy</th>
                   <th className="px-4 py-3 text-left font-medium">Words</th>
                   <th className="px-4 py-3 text-left font-medium">Punct.</th>
                   <th className="px-4 py-3 text-left font-medium">Completion</th>
@@ -123,21 +107,21 @@ export default function StudentResultsPage() {
                 {attempts.map((attempt) => (
                   <tr
                     key={attempt.id}
-                    className="border-b border-border last:border-0"
+                    className="table-row"
                   >
                     <td className="px-4 py-3">
                       {formatISTDateTime(attempt.createdAt)}
                     </td>
                     <td className="px-4 py-3">
-                      {attempt.dictation?.title ?? '—'}
+                      <Link prefetch={false} href={`/student/results/${attempt.id}`} className="font-medium text-brand underline-offset-4 hover:underline">{attempt.dictation?.title ?? 'Dictation result'}</Link>
                       <span className="ml-1 text-xs text-muted-foreground">
                         {attempt.dictation?.category ?? ''}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-medium">{attempt.wpm}</td>
-                    <td className="px-4 py-3">{attempt.accuracy}%</td>
+                    <td className="px-4 py-3 font-mono font-semibold tabular-nums text-foreground">{attempt.wpm}</td>
+                    <td className="px-4 py-3 font-mono tabular-nums">{attempt.accuracy}%</td>
                     <td
-                      className="px-4 py-3 text-green-500"
+                      className="px-4 py-3 text-success"
                       title={`wrong ${attempt.wordsIncorrect} · missed ${attempt.wordsMissed} · extra ${attempt.wordsExtra}`}
                     >
                       {attempt.wordsCorrect}/{attempt.wordsTotal}
@@ -148,9 +132,17 @@ export default function StudentResultsPage() {
                     >
                       {attempt.punctuationCorrect}/{attempt.punctuationTotal}
                     </td>
-                    <td className="px-4 py-3">{attempt.completion}%</td>
+                    <td className="px-4 py-3 font-mono tabular-nums">{attempt.completion}%</td>
                     <td className="px-4 py-3">
-                      {attempt.completed ? 'Yes' : 'No'}
+                      <span
+                        className={
+                          attempt.completed
+                            ? 'badge badge-success'
+                            : 'badge badge-neutral'
+                        }
+                      >
+                        {attempt.completed ? 'Yes' : 'No'}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -163,6 +155,7 @@ export default function StudentResultsPage() {
           </p>
         </>
       )}
+      <ResultsPagination path="/student/results" page={page} hasMore={rows.length > PAGE_SIZE} filters={dictationId ? { dictationId } : undefined} />
     </div>
   );
 }

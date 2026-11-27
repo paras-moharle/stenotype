@@ -1,3 +1,4 @@
+import { readJson } from '@/lib/mutation-request';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/admin/require-admin';
@@ -20,12 +21,13 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const gate = await requireAdmin();
+  const gate = await requireAdmin(request);
   if (!gate.ok) return gate.response;
 
   const { id } = await params;
-  const body = await request.json().catch(() => null);
-  const parsed = updateStudentSchema.safeParse(body);
+  const body = await readJson(request, 16_384);
+  if (!body.ok) return body.response;
+  const parsed = updateStudentSchema.safeParse(body.data);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -79,10 +81,10 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const gate = await requireAdmin();
+  const gate = await requireAdmin(request);
   if (!gate.ok) return gate.response;
 
   const { id } = await params;

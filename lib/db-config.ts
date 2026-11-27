@@ -21,3 +21,13 @@ export const poolConfig: PoolConfig = {
   idleTimeoutMillis: 10_000,
   allowExitOnIdle: true,
 };
+
+// Prisma CLI and libpq consume their own URL. Only the node-postgres
+// runtime adapter needs this normalization for legacy Neon URLs.
+export function runtimeDatabaseUrl(raw = process.env.DATABASE_URL) {
+  if (!raw) return undefined;
+  const url = new URL(raw);
+  if (!url.hostname.endsWith('.neon.tech')) return raw;
+  url.searchParams.set('sslmode', 'verify-full');
+  return url.href;
+}

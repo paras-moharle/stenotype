@@ -1,3 +1,4 @@
+import { parseYouTubeId } from '../youtube';
 /**
  * Validation for admin payloads.
  *
@@ -7,6 +8,7 @@
  */
 
 import { z } from 'zod';
+import { MAX_CUSTOM_CHARS, MAX_TOKEN_CELLS, tokenizeScored, normalizeText } from '../typing/scoring';
 
 /* ─── Shared ─────────────────────────────────────────────── */
 
@@ -34,11 +36,11 @@ export const studentStatusSchema = z.enum([
  * An absent key stays absent so a PATCH-style update can ignore it.
  */
 export const youtubeIdSchema = z
-  .union([z.string().trim().max(20), z.null()])
+  .union([z.string().trim().refine((id) => !id || parseYouTubeId(id) !== null, 'Enter a YouTube link or an 11-character video ID'), z.null()])
   .optional()
   .transform((value) => {
     if (value === undefined) return undefined;
-    return value === null || value.length === 0 ? null : value;
+    return value === null || value.length === 0 ? null : parseYouTubeId(value);
   });
 
 const transcriptSchema = z
@@ -47,13 +49,24 @@ const transcriptSchema = z
   .min(1, 'Transcript is required')
   .max(50_000, 'Transcript is too long');
 
+export function publicationTranscriptError(transcript: string): string | undefined {
+  const normalized = normalizeText(transcript);
+  if (normalized.length > MAX_CUSTOM_CHARS) {
+    return `Published transcripts can contain at most ${MAX_CUSTOM_CHARS} characters after whitespace normalization.`;
+  }
+  const tokenLimit = Math.floor(Math.sqrt(MAX_TOKEN_CELLS)) - 1;
+  if (tokenizeScored(normalized).length > tokenLimit) {
+    return `Published transcripts can contain at most ${tokenLimit} scored items.`;
+  }
+}
+
 const titleSchema = z
   .string()
   .trim()
   .min(1, 'Title is required')
   .max(200, 'Title is too long');
 
-const durationSchema = z.number().int().positive().nullable().optional();
+const durationSchema = z.number().int().positive().max(2_147_483_647).nullable().optional();
 
 /* ─── Dictations ─────────────────────────────────────────── */
 
@@ -64,6 +77,10 @@ export const createDictationSchema = z.object({
   youtubeId: youtubeIdSchema,
   durationSeconds: durationSchema,
   status: z.enum(['DRAFT', 'PUBLISHED']).optional(),
+}).superRefine((value, ctx) => {
+  if (value.status !== 'PUBLISHED') return;
+  const error = publicationTranscriptError(value.referenceTranscript);
+  if (error) ctx.addIssue({ code: 'custom', path: ['referenceTranscript'], message: error });
 });
 
 export const updateDictationSchema = z
@@ -74,8 +91,9 @@ export const updateDictationSchema = z
     youtubeId: youtubeIdSchema,
     durationSeconds: durationSchema,
     status: dictationStatusSchema.optional(),
+    expectedUpdatedAt: z.iso.datetime().optional(),
   })
-  .refine((value) => Object.values(value).some((v) => v !== undefined), {
+  .refine((value) => Object.entries(value).some(([key, entry]) => key !== 'expectedUpdatedAt' && entry !== undefined), {
     message: 'No fields to update',
   });
 

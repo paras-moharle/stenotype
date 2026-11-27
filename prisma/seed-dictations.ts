@@ -7,13 +7,9 @@
  * sent to the client until scoring.
  */
 
-for (const file of ['.env.local', '.env']) {
-  try {
-    process.loadEnvFile?.(file);
-  } catch {
-    // File does not exist — that's fine.
-  }
-}
+import { loadEnvironment } from '../scripts/load-environment.mjs';
+
+loadEnvironment();
 
 async function main() {
   const { db } = await import('../lib/db');
