@@ -1,10 +1,11 @@
 import { validDictationId } from '@/lib/dictation-catalog';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { formatISTDateTime } from '@/lib/datetime';
 import { StudentHeader } from '@/components/student/student-header';
 
 import { db } from '@/lib/db';
-import { dictationAttemptsWhere, dictationAttemptStats, dictationHistorySelect } from '@/lib/dictation-history';
+import { dictationAttemptsWhere, dictationHistorySelect } from '@/lib/dictation-history';
 import { requireStudentPage } from '@/lib/student-session';
 import { parsePageNumber } from '@/lib/pagination';
 import { ResultsPagination } from '@/components/ui/results-pagination';
@@ -20,62 +21,42 @@ export default async function StudentResultsPage({
   const params = await searchParams;
   const page = parsePageNumber(params.page);
   const dictationId = typeof params.dictationId === 'string' && validDictationId(params.dictationId) ? params.dictationId : undefined;
-  const [rows, stats] = await Promise.all([
-    db.typingAttempt.findMany({
-      where: { ...dictationAttemptsWhere, studentId: profile.id, ...(dictationId ? { dictationId } : {}) },
-      select: dictationHistorySelect,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: PAGE_SIZE + 1,
-      skip: (page - 1) * PAGE_SIZE,
-    }),
-    dictationId ? null : dictationAttemptStats(profile.id),
-  ]);
+  if (dictationId) {
+    const saved = await db.typingAttempt.findUnique({
+      where: { studentId_dictationId: { studentId: profile.id, dictationId } },
+      select: { id: true },
+    });
+    if (saved) redirect(`/student/results/${encodeURIComponent(saved.id)}`);
+  }
+  const rows = dictationId ? [] : await db.typingAttempt.findMany({
+    where: { ...dictationAttemptsWhere, studentId: profile.id },
+    select: dictationHistorySelect,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: PAGE_SIZE + 1,
+    skip: (page - 1) * PAGE_SIZE,
+  });
   const attempts = rows.slice(0, PAGE_SIZE);
 
   return (
     <div className="space-y-8">
       <StudentHeader
         title="My results"
-        description="Saved dictation scores and historical transcription reviews."
+        description="One saved result per dictation. Practicing again replaces the saved result."
       />
 
       {dictationId && <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span>{attempts[0]?.dictation?.title ?? 'Selected dictation'}</span>
+        <span>Selected dictation</span>
         <Link href="/student/results" className="text-brand underline">All results</Link>
         <Link href="/student/dictations" className="text-brand underline">Dictation library</Link>
       </div>}
       {attempts.length === 0 ? (
         <div className="card-sheen rounded-3xl border border-dashed border-border bg-surface/30 px-6 py-14 text-center">
           <p className="text-sm text-muted-foreground">
-            {page === 1 && dictationId ? 'You have no saved attempts for this dictation.' : page === 1 ? 'Complete a dictation to see your scores here.' : 'No results on this page.'}
+            {dictationId ? 'You have no saved result for this dictation.' : page === 1 ? 'Complete a dictation to see your scores here.' : 'No results on this page.'}
           </p>
         </div>
       ) : (
         <>
-          {/* Summary stats */}
-          {stats && stats.totalAttempts > 0 && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="stat card-sheen p-4">
-                <div className="stat-value text-brand">{stats.totalAttempts}</div>
-                <div className="text-sm text-muted-foreground">
-                  All attempts
-                </div>
-              </div>
-              <div className="stat card-sheen p-4">
-                <div className="stat-value text-brand">{stats.avgWpm}</div>
-                <div className="text-sm text-muted-foreground">Avg net WPM</div>
-              </div>
-              <div className="stat card-sheen p-4">
-                <div className="stat-value text-brand">{stats.avgAccuracy}%</div>
-                <div className="text-sm text-muted-foreground">Avg attempted accuracy</div>
-              </div>
-              <div className="stat card-sheen p-4">
-                <div className="stat-value text-brand">{stats.bestWpm}</div>
-                <div className="text-sm text-muted-foreground">Best net WPM</div>
-              </div>
-            </div>
-          )}
-
           <ul className="divide-y divide-border rounded-xl border border-border bg-surface md:hidden">
             {attempts.map((attempt) => (
               <li key={attempt.id}>

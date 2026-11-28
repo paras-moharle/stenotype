@@ -1,7 +1,12 @@
+import { after } from 'next/server';
+import { getStorageCapacity } from '@/lib/db-capacity';
+import { scheduleDatabaseMaintenance } from '@/lib/schedule-database-maintenance';
 import { createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
 import { readJson, rejectCrossOriginMutation } from '@/lib/mutation-request';
 import { takeSharedQuota } from '@/lib/shared-rate-limit';
+import { signInSnapshot } from '@/lib/admitted-sign-in';
+import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { isPublicAuthPath } from '@/lib/auth-config';
 import { toNextJsHandler } from 'better-auth/next-js';
@@ -40,6 +45,32 @@ async function handlePublicAuth(request: Request) {
       if (!(await takeSharedQuota(`login:${key(data.email.trim().toLowerCase())}`, 20, windowMs))) {
         return throttle();
       }
+      const user = await db.user.findUnique({
+        where: { email: data.email.trim().toLowerCase() },
+        select: { id: true, role: true, updatedAt: true },
+      });
+      const result = await signInSnapshot.run(
+        user ? { id: user.id, updatedAt: user.updatedAt.getTime(), role: user.role } : null,
+        () => handler.POST(request),
+      );
+      scheduleDatabaseMaintenance();
+      if (user && (result.status === 401 || result.status === 403)) {
+        after(async () => {
+          try {
+            if ((await getStorageCapacity()).level === 'restricted') return;
+            // Select by stable ID inside the write. A deleted account cannot
+            // leave a new detached audit row after its deletion has committed.
+            await db.$executeRaw`
+              INSERT INTO "LoginAttempt" ("id", "email", "userId", "success")
+              SELECT gen_random_uuid()::text, email, id, false
+              FROM "user" WHERE id = ${user.id} FOR KEY SHARE
+            `;
+          } catch {
+            // Audit logging cannot change the authentication outcome.
+          }
+        });
+      }
+      return result;
     }
   }
   return request.method === 'GET' ? handler.GET(request) : handler.POST(request);

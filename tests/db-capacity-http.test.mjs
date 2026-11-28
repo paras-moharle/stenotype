@@ -16,7 +16,7 @@ test('restricted database capacity blocks growth while sign-in and logout work',
   assert.equal(signIn.status, 200);
   const cookie = signIn.headers.getSetCookie().map((item) => item.split(';')[0]).join('; ');
   const blocked = await fetch(url + '/api/admin/dictations', {
-    method: 'POST', headers: { ...headers, cookie },
+    method: 'POST', headers: { ...headers, cookie, 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify({ title: 'Capacity test', category: 'GENERAL', referenceTranscript: 'Temporary draft.' }),
   });
   assert.equal(blocked.status, 503);

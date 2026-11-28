@@ -7,6 +7,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useRef,
   type ReactNode,
 } from 'react';
 
@@ -25,6 +26,7 @@ type AuthContextValue = {
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<AppUser>;
   signOut: () => Promise<void>;
+  signingOut: boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -61,6 +63,8 @@ export function AuthProvider({
   const seeded = initialUser !== undefined;
   const [user, setUser] = useState<AppUser | null>(initialUser ?? null);
   const [isLoading, setIsLoading] = useState(!seeded);
+  const [signingOut, setSigningOut] = useState(false);
+  const logoutPending = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -167,6 +171,9 @@ export function AuthProvider({
    * the user straight back to their dashboard.
    */
   const signOut = useCallback(async () => {
+    if (logoutPending.current) return;
+    logoutPending.current = true;
+    setSigningOut(true);
     const post = (url: string) =>
       fetch(url, {
         method: 'POST',
@@ -214,8 +221,9 @@ export function AuthProvider({
       isLoading,
       signIn,
       signOut,
+      signingOut,
     }),
-    [user, isLoading, signIn, signOut]
+    [user, isLoading, signIn, signOut, signingOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -103,11 +103,11 @@ const localSuite = !skip && ['localhost', '127.0.0.1', '[::1]'].includes(new URL
 test('local admin policy, provisioning and idempotent dictation history', {
   skip: !localSuite || !adminEmail || !adminPassword ? 'requires seeded loopback CI credentials' : false,
 }, async () => {
-  async function call(path, { method = 'GET', cookie, body } = {}) {
+  async function call(path, { method = 'GET', cookie, body, headers = {} } = {}) {
     return fetch(`${base}${path}`, {
       method,
       redirect: 'manual',
-      headers: { ...(method === 'GET' ? {} : jsonHeaders), ...(cookie ? { cookie } : {}) },
+      headers: { ...(method === 'GET' ? {} : jsonHeaders), ...(cookie ? { cookie } : {}), ...headers },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   }
@@ -160,6 +160,7 @@ test('local admin policy, provisioning and idempotent dictation history', {
   const published = await call('/api/admin/dictations', {
     method: 'POST',
     cookie: admin,
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
     body: { title: 'CI dictation', category: 'GENERAL', referenceTranscript: transcript, status: 'PUBLISHED', youtubeId: 'dQw4w9WgXcQ', durationSeconds: 198 },
   });
   assert.equal(published.status, 201);
@@ -221,14 +222,19 @@ test('local admin policy, provisioning and idempotent dictation history', {
     method: 'PUT', cookie: admin, body: { title: 'Stale draft', expectedUpdatedAt: editorVersion },
   });
   assert.equal(stale.status, 409);
-  const retry = await call('/api/attempts', { method: 'POST', cookie: studentCookie, body });
-  assert.equal(retry.status, 200);
-  assert.equal((await retry.json()).reference, transcript);
   const supersededRecording = await call('/api/attempts', {
     method: 'POST', cookie: studentCookie, body: { ...body, ...recordingTicket },
   });
   assert.equal(supersededRecording.status, 409);
   assert.equal((await supersededRecording.json()).code, 'PRACTICE_UNAVAILABLE');
+  for (const status of ['ARCHIVED', 'PUBLISHED']) {
+    assert.equal((await call(`/api/admin/dictations/${dictation.id}`, {
+      method: 'PUT', cookie: admin, body: { status },
+    })).status, 200);
+  }
+  const retry = await call('/api/attempts', { method: 'POST', cookie: studentCookie, body });
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).reference, transcript, 'saved results survive archiving and republishing');
   // Two commits/replays, one recovery, and one rejected recording used
   // four slots. Saturate the remaining per-process budget.
   for (let index = 0; index < 26; index++) {
@@ -282,7 +288,7 @@ test('local admin policy, provisioning and idempotent dictation history', {
   assert.equal((await post(unsaved)).status, 409, 'a prior publication cannot be reused after republishing');
 
   const disappearing = await call('/api/admin/dictations', {
-    method: 'POST', cookie: admin, body: { title: 'Disposable deletion test', category: 'LEGAL', referenceTranscript: transcript, status: 'PUBLISHED' },
+    method: 'POST', cookie: admin, headers: { 'Idempotency-Key': crypto.randomUUID() }, body: { title: 'Disposable deletion test', category: 'LEGAL', referenceTranscript: transcript, status: 'PUBLISHED' },
   });
   assert.equal(disappearing.status, 201);
   const disappearingId = (await disappearing.json()).dictation.id;
@@ -300,26 +306,56 @@ test('local admin policy, provisioning and idempotent dictation history', {
   const emptyHistory = await call('/api/student/attempts', { cookie: otherStudent });
   assert.deepEqual((await emptyHistory.json()).attempts, []);
 
+  const issue = async () => {
+    const response = await call(`/api/dictations?id=${dictation.id}`, { cookie: otherStudent });
+    assert.equal(response.status, 200);
+    return { ...body, ...(await response.json()).practice, typed: 'An updated practice passage.' };
+  };
+  const first = await issue();
+  const initialResult = await post(first);
+  assert.equal(initialResult.status, 200);
+  const savedId = (await initialResult.json()).attemptId;
+  const older = await issue();
+  const newer = await issue();
+  const replacementAttempt = { ...newer, typed: 'An updated practice passage!' };
+  const [oldWrite, newWrite] = await Promise.all([post(older), post(replacementAttempt)]);
+  assert.ok([200, 409].includes(oldWrite.status));
+  assert.equal(newWrite.status, 200);
+  assert.equal((await newWrite.json()).attemptId, savedId);
+  assert.equal((await post(first)).status, 409, 'an accepted older submission cannot replace the new result');
+  assert.equal((await post(older)).status, 409, 'an older ticket cannot replace the current result');
+  const retryReplacement = await post(replacementAttempt);
+  assert.equal(retryReplacement.status, 200);
+  assert.equal((await retryReplacement.json()).attemptId, savedId);
+  const rejected = await issue();
+  assert.equal((await post({ ...rejected, typed: '' })).status, 400);
+  assert.equal((await post(replacementAttempt)).status, 200, 'failed replacementAttempt did not change the accepted result');
+  const currentResults = await call(`/api/student/attempts?dictationId=${dictation.id}`, { cookie: otherStudent });
+  assert.deepEqual((await currentResults.json()).attempts.map(result => result.id), [savedId]);
+  const detail = await call(`/student/results?dictationId=${dictation.id}`, { cookie: otherStudent });
+  assert.ok(detail.headers.get('location')?.endsWith(savedId) || (await detail.text()).includes(savedId));
+
+
+  const studentAccount = `/api/admin/users/${student.user.id}`;
   const status = await call(`/api/admin/students/${student.id}`, {
-    method: 'PUT', cookie: admin, body: { status: 'INACTIVE' },
+    method: 'PUT', cookie: admin, body: { status: 'INACTIVE', expected: { status: 'ACTIVE' } },
   });
   assert.equal(status.status, 200);
-  assert.equal((await call('/api/dictations', { cookie: studentCookie })).status, 403);
-  assert.equal((await call('/api/student/attempts', { cookie: studentCookie })).status, 403);
-  assert.match((await call('/student/dashboard', { cookie: studentCookie })).headers.get('location'), /\/login\?denied=1/);
+  assert.equal((await call('/api/dictations', { cookie: studentCookie })).status, 401);
+  assert.equal((await call('/api/student/attempts', { cookie: studentCookie })).status, 401);
+  assert.equal((await signInResponse(email, password)).status, 403);
 
-  const studentIdentity = (await (await call('/api/auth/get-session', { cookie: studentCookie })).json()).user;
-  const studentAccount = `/api/admin/users/${studentIdentity.id}`;
   const activation = await call(`/api/admin/students/${student.id}`, {
-    method: 'PUT', cookie: admin, body: { status: 'ACTIVE' },
+    method: 'PUT', cookie: admin, body: { status: 'ACTIVE', expected: { status: 'INACTIVE' } },
   });
   assert.equal(activation.status, 200);
-  assert.equal((await call('/api/student/attempts', { cookie: studentCookie })).status, 200);
+  const activatedCookie = await signIn(email, password);
+  assert.equal((await call('/api/student/attempts', { cookie: activatedCookie })).status, 200);
 
   const revoked = await call(`${studentAccount}/revoke-sessions`, { method: 'POST', cookie: admin });
   assert.equal(revoked.status, 200);
   assert.equal((await revoked.json()).revoked, 1);
-  assert.equal((await call('/api/dictations', { cookie: studentCookie })).status, 401);
+  assert.equal((await call('/api/dictations', { cookie: activatedCookie })).status, 401);
 
   const newCookie = await signIn(email, password);
   const ban = await call(`${studentAccount}/ban`, { method: 'POST', cookie: admin, body: { banned: true } });
@@ -329,7 +365,73 @@ test('local admin policy, provisioning and idempotent dictation history', {
   assert.equal(blockedSignIn.status, 403);
   const unban = await call(`${studentAccount}/ban`, { method: 'POST', cookie: admin, body: { banned: false } });
   assert.equal(unban.status, 200);
-  assert.ok(await signIn(email, password));
+  const restoredCookie = await signIn(email, password);
+  const studentPath = `/api/admin/students/${student.id}`;
+  const changeStudent = (body) => call(studentPath, { method: 'PUT', cookie: admin, body });
+  assert.equal((await changeStudent({ name: 'Newer Name', expected: { name: student.user.name } })).status, 200);
+  const phoneEdit = await changeStudent({ phone: '12345', expected: { phone: null } });
+  assert.equal((await phoneEdit.json()).student.user.name, 'Newer Name');
+  assert.equal((await changeStudent({ name: 'Old tab', expected: { name: student.user.name } })).status, 409);
+  assert.equal((await changeStudent({ email: process.env.SMOKE_EMAIL, expected: { email } })).status, 409);
+  const nextEmail = `changed-${crypto.randomUUID()}@example.test`;
+  assert.equal((await changeStudent({ email: nextEmail.toUpperCase(), expected: { email } })).status, 200);
+  assert.equal((await call('/api/student/attempts', { cookie: restoredCookie })).status, 401);
+  assert.equal((await signInResponse(email, password)).status, 401);
+  const updatedLogin = await signIn(nextEmail, password);
+
+  const listResult = await call(`/api/admin/students?q=${encodeURIComponent(nextEmail)}`, { cookie: admin });
+  const managed = (await listResult.json()).students[0];
+  assert.equal(managed.user.email, nextEmail);
+  const reset = { action: 'reset-password', expectedCredentialRevision: managed.user.updatedAt };
+  const resetCalls = await Promise.all([1, 2].map(() => call(studentPath, { method: 'POST', cookie: admin, body: reset })));
+  assert.deepEqual(resetCalls.map(value => value.status).sort(), [200, 409]);
+  const resetResponse = resetCalls.find(value => value.status === 200);
+  assert.match(resetResponse.headers.get('cache-control'), /no-store/);
+  const replacement = (await resetResponse.json()).password;
+  assert.equal(typeof replacement, 'string');
+  assert.equal((await call('/api/student/attempts', { cookie: updatedLogin })).status, 401);
+  assert.equal((await signInResponse(nextEmail, password)).status, 401);
+  const replacementCookie = await signIn(nextEmail, replacement);
+  const finalPassword = 'different-local-password';
+  const changedPassword = await call('/api/student/password', {
+    method: 'POST', cookie: replacementCookie, body: { currentPassword: replacement, newPassword: finalPassword },
+  });
+  assert.equal(changedPassword.status, 200);
+  assert.equal((await call('/api/student/attempts', { cookie: replacementCookie })).status, 401);
+  assert.equal((await signInResponse(nextEmail, replacement)).status, 401);
+  const finalCookie = await signIn(nextEmail, finalPassword);
+
+  const key = crypto.randomUUID();
+  const content = { title: 'Idempotency test', category: 'LEGAL', referenceTranscript: 'A swifter witness reached the bench.', status: 'PUBLISHED' };
+  const upload = (body = content) => call('/api/admin/dictations', {
+    method: 'POST', cookie: admin, headers: { 'Idempotency-Key': key }, body,
+  });
+  const concurrentCreate = await Promise.all([upload(), upload()]);
+  assert.deepEqual(concurrentCreate.map(value => value.status), [201, 201]);
+  const receipts = await Promise.all(concurrentCreate.map(value => value.json()));
+  assert.deepEqual(receipts[0], receipts[1]);
+  assert.equal((await upload({ ...content, title: 'Different content' })).status, 409);
+  const purgeId = receipts[0].dictation.id;
+  const practiceTicket = (await (await call(`/api/dictations?id=${purgeId}`, { cookie: otherStudent })).json()).practice;
+  const purgeAttempt = { ...practiceTicket, passageId: purgeId, typed: content.referenceTranscript, elapsedMs: 60_000 };
+  assert.equal((await call('/api/attempts', { method: 'POST', cookie: otherStudent, body: purgeAttempt })).status, 200);
+  const purgeDictation = (expectedResults) => call(`/api/admin/dictations/${purgeId}`, {
+    method: 'POST', cookie: admin, body: { confirmTitle: content.title, expectedResults },
+  });
+  assert.equal((await purgeDictation(0)).status, 409);
+  assert.equal((await purgeDictation(1)).status, 200);
+  assert.equal((await call('/api/attempts', { method: 'POST', cookie: otherStudent, body: purgeAttempt })).status, 409);
+  assert.deepEqual(await (await upload()).json(), receipts[0]);
+  assert.equal((await call(`/api/admin/dictations/${purgeId}`, { cookie: admin })).status, 404);
+
+  const purgeStudent = (expectedResults) => call(studentPath, {
+    method: 'POST', cookie: admin, body: { action: 'purge', confirmName: 'Newer Name', expectedResults },
+  });
+  assert.equal((await purgeStudent(0)).status, 409);
+  assert.equal((await purgeStudent(1)).status, 200);
+  assert.equal((await call('/api/student/attempts', { cookie: finalCookie })).status, 401);
+  const loginAudit = await call(`/api/admin/login-history?student=${student.user.id}`, { cookie: admin });
+  assert.deepEqual((await loginAudit.json()).attempts, [], "purge removes the student's linked audit events");
 });
 
 test('concurrent local sign-ins leave one usable session', { skip: !localSuite ? 'requires a loopback URL and seeded student credentials' : false }, async () => {

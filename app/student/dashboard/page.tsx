@@ -1,6 +1,6 @@
 import { StudentGreeting } from '@/components/student/student-greeting';
 import { db } from '@/lib/db';
-import { dictationAttemptsWhere, dictationAttemptStats } from '@/lib/dictation-history';
+import { dictationAttemptsWhere } from '@/lib/dictation-history';
 import { requireStudentPage } from '@/lib/student-session';
 import { formatISTDate } from '@/lib/datetime';
 import Link from 'next/link';
@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 export default async function StudentDashboardPage() {
   const { profile } = await requireStudentPage();
   const attemptWhere = { ...dictationAttemptsWhere, studentId: profile.id };
-  const [recentAttempts, availableDictations, stats] = await Promise.all([
+  const [recentAttempts, availableDictations] = await Promise.all([
     db.typingAttempt.findMany({
       where: attemptWhere,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -30,39 +30,11 @@ export default async function StudentDashboardPage() {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { id: true, title: true, category: true },
     }),
-    dictationAttemptStats(profile.id),
   ]);
 
   return (
     <div className="space-y-10">
       <StudentGreeting description="Pick up where you left off, or jump into a new dictation." />
-
-      {/* Stats */}
-      {stats.totalAttempts > 0 && (
-        <section>
-          <h2 className="section-label">
-            Your progress
-          </h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="stat card-sheen hover-lift animate-fade-in">
-              <div className="stat-value text-brand">{stats.totalAttempts}</div>
-              <div className="text-sm text-muted-foreground">Attempts</div>
-            </div>
-            <div className="stat card-sheen hover-lift animate-fade-in">
-              <div className="stat-value text-brand">{stats.avgWpm}</div>
-              <div className="text-sm text-muted-foreground">Avg net WPM</div>
-            </div>
-            <div className="stat card-sheen hover-lift animate-fade-in">
-              <div className="stat-value text-brand">{stats.avgAccuracy}%</div>
-              <div className="text-sm text-muted-foreground">Avg attempted accuracy</div>
-            </div>
-            <div className="stat card-sheen hover-lift animate-fade-in">
-              <div className="stat-value text-brand">{stats.bestWpm}</div>
-              <div className="text-sm text-muted-foreground">Best net WPM</div>
-            </div>
-          </div>
-        </section>
-      )}
 
       {/* Shortcuts */}
       <section>
@@ -85,7 +57,7 @@ export default async function StudentDashboardPage() {
           <ShortcutCard
             icon={BarChart3}
             title="My results"
-            description="View your typing history"
+            description="Review your saved dictation results"
             href="/student/results"
           />
         </div>
@@ -119,11 +91,11 @@ export default async function StudentDashboardPage() {
         </section>
       )}
 
-      {/* Recent attempts */}
+      {/* Saved results */}
       {recentAttempts.length > 0 && (
         <section>
           <h2 className="section-label">
-            Recent attempts
+            Saved results
           </h2>
           <div className="space-y-2">
             {recentAttempts.map((attempt) => (

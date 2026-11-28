@@ -9,7 +9,7 @@ import { ThemeSwitch } from '@/components/ui/theme-switch';
 
 export function Navbar() {
   const pathname = usePathname();
-  const { user, isLoading, signOut } = useAuth();
+  const { user, isLoading, signOut, signingOut } = useAuth();
   const workspace = user?.role === 'admin' ? '/admin' : '/student/dashboard';
 
   return (
@@ -28,8 +28,8 @@ export function Navbar() {
                 <LayoutDashboard className="hidden size-4 max-sm:block" aria-hidden />
                 <span className="max-sm:sr-only">Workspace</span>
               </Link>
-              <button type="button" className="shell-nav-link size-11 justify-center p-0" onClick={signOut} aria-label="Sign out">
-                <LogOut className="size-4" aria-hidden />
+              <button type="button" className="shell-nav-link size-11 justify-center p-0" onClick={signOut} disabled={signingOut} aria-label={signingOut ? 'Signing out…' : 'Sign out'}>
+                {signingOut ? <span role="status" className="text-xs">Wait…</span> : <LogOut className="size-4" aria-hidden />}
               </button>
             </>
           ) : <Link href="/login" aria-current={pathname === '/login' ? 'page' : undefined} className="shell-nav-link min-h-11 bg-brand-soft px-3 text-brand">Sign in</Link>}

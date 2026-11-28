@@ -404,7 +404,7 @@ test('authenticated catalog actions load the exact dictation, leaving the active
   const transcript = 'Read this private practice sentence only in the study view.';
   const created = await fetch(`${origin}/api/admin/dictations`, {
     method: 'POST',
-    headers: { ...headers, Cookie: admin },
+    headers: { ...headers, Cookie: admin, 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify({ title, referenceTranscript: transcript, category: 'GENERAL', status: 'PUBLISHED', youtubeId: 'dQw4w9WgXcQ' }),
   });
   assert.equal(created.status, 201);
@@ -1038,4 +1038,99 @@ test('custom practice preserves the applied passage when a draft is cancelled or
   assert.equal(await browser.evaluate("!!document.querySelector('[aria-label=\"Live typing statistics\"]')"), false);
   assert.equal(await browser.evaluate("document.querySelector('details:has(summary)').open"), false);
 
+});
+
+test('admin filters and action popovers support keyboard and narrow viewports', {
+  skip: skip || (!localStudent || process.env.STENO_DISPOSABLE_DB !== 'YES'
+    || !process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD ? 'requires seeded loopback service' : false),
+}, async (t) => {
+  const origin = new URL(URL_UNDER_TEST).origin;
+  const headers = { Origin: origin, 'Content-Type': 'application/json' };
+  const signedIn = await fetch(origin + '/api/auth/sign-in/email', {
+    method: 'POST', headers,
+    body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD }),
+  });
+  assert.equal(signedIn.status, 200);
+  const cookie = signedIn.headers.getSetCookie().find(line => line.includes('better-auth.session_token=')).split(';')[0];
+  const title = 'Administration toolbar fixture';
+  const created = await fetch(origin + '/api/admin/dictations', {
+    method: 'POST', headers: { ...headers, Cookie: cookie, 'Idempotency-Key': crypto.randomUUID() },
+    body: JSON.stringify({ title, referenceTranscript: 'A transcript for the administration toolbar browser check.', category: 'LEGAL', status: 'DRAFT' }),
+  });
+  assert.equal(created.status, 201);
+  const { dictation } = await created.json();
+  t.after(() => fetch(origin + '/api/admin/dictations/' + dictation.id, { method: 'DELETE', headers: { ...headers, Cookie: cookie } }));
+
+  const { proc, page } = await launchChrome();
+  const cdp = connect(page.webSocketDebuggerUrl);
+  t.after(() => { cdp.ws.close(); proc.kill('SIGKILL'); });
+  await cdp.ready;
+  await cdp.send('Page.enable');
+  await cdp.send('Network.enable');
+  const listRequests = [];
+  const loginRequests = [];
+  cdp.ws.addEventListener('message', ({ data }) => {
+    const event = JSON.parse(data);
+    if (event.method === 'Network.requestWillBeSent' && new URL(event.params.request.url).pathname === '/api/admin/dictations') {
+      listRequests.push(event.params.request.url);
+    }
+    if (event.method === 'Network.requestWillBeSent' && new URL(event.params.request.url).pathname === '/api/admin/login-history') {
+      loginRequests.push(event.params.request.url);
+    }
+  });
+  const [name, ...value] = cookie.split('=');
+  await cdp.send('Network.setCookie', { name, value: value.join('='), url: origin });
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 752, deviceScaleFactor: 1, mobile: false });
+  await cdp.send('Page.navigate', { url: origin + '/admin/dictations' });
+  const menuButton = 'document.querySelector(\'[aria-label="More actions for Administration toolbar fixture"]\')';
+  await cdp.waitFor(`!!(${menuButton})`);
+  assert.equal(await cdp.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+  assert.equal(await cdp.evaluate(`(${menuButton}).getBoundingClientRect().right <= innerWidth`), true);
+
+  const press = async (key) => {
+    const windowsVirtualKeyCode = { Enter: 13, End: 35, Escape: 27 }[key];
+    const event = { key, code: key, windowsVirtualKeyCode };
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+  };
+  const openWithKeyboard = async (selector) => {
+    // The server rows can be visible before the control has hydrated.
+    for (let trial = 0; trial < 40; trial += 1) {
+      if (await cdp.evaluate("!!document.querySelector('[role=listbox]')")) return;
+      await cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.focus()`);
+      await press('Enter');
+      await sleep(100);
+    }
+    assert.fail('The filter did not open with Enter');
+  };
+  await openWithKeyboard('[role=combobox][aria-label=Category]');
+  assert.equal(listRequests.length, 0, 'first authorized page is rendered without a list API request');
+  await press('End');
+  await cdp.waitFor("document.activeElement?.textContent === 'General'");
+  await press('Enter');
+  await cdp.waitFor("document.querySelector('[role=combobox][aria-label=Category]').textContent.includes('General')");
+  await cdp.waitFor(`!(${menuButton})`);
+  await cdp.waitFor("performance.getEntriesByType('resource').some(entry => new URL(entry.name).searchParams.get('category') === 'GENERAL')");
+  assert.ok(listRequests.some(url => new URL(url).searchParams.get('category') === 'GENERAL'));
+  await cdp.evaluate("document.querySelector('[role=combobox][aria-label=Category]').click()");
+  await cdp.waitFor("!!document.querySelector('[role=listbox]')");
+  await cdp.evaluate("Array.from(document.querySelectorAll('[role=option]')).find(option => option.textContent === 'All categories').click()");
+  await cdp.waitFor(`!!(${menuButton})`);
+
+  await cdp.waitFor(`!(${menuButton}).disabled && !document.querySelector('[role=listbox]')`);
+  await cdp.evaluate(`(${menuButton}).focus(); (${menuButton}).click()`);
+  await cdp.waitFor("!!document.querySelector('.admin-row-actions:popover-open')");
+  assert.equal(await cdp.evaluate("document.querySelector('.admin-row-actions:popover-open').textContent.includes('Delete unused dictation')"), true);
+  await press('Escape');
+  await cdp.waitFor("!document.querySelector('.admin-row-actions:popover-open')");
+  assert.equal(await cdp.evaluate(`document.activeElement === (${menuButton})`), true);
+
+  await cdp.send('Page.navigate', { url: origin + '/admin/login-history' });
+  await cdp.waitFor("location.pathname === '/admin/login-history' && !!document.querySelector('tbody tr')");
+  await openWithKeyboard('[aria-label=Outcome]');
+  assert.equal(loginRequests.length, 0, 'login history renders its first page without calling the list API');
+  await press('End');
+  await cdp.waitFor("document.activeElement?.textContent === 'Failed'");
+  await press('Enter');
+  await cdp.waitFor("performance.getEntriesByType('resource').some(entry => new URL(entry.name).searchParams.get('success') === 'false')");
 });

@@ -1,11 +1,12 @@
+import { ChangePassword } from '@/components/student/change-password';
 import { StudentHeader } from '@/components/student/student-header';
 import { Mail, User as UserIcon, Shield } from 'lucide-react';
 import { requireStudentPage } from '@/lib/student-session';
-import { dictationAttemptStats } from '@/lib/dictation-history';
+import { db } from '@/lib/db';
 
 export default async function StudentProfilePage() {
   const { user, profile } = await requireStudentPage();
-  const stats = await dictationAttemptStats(profile.id);
+  const saved = await db.typingAttempt.count({ where: { studentId: profile.id } });
 
   const initials = user?.name
     ?.split(' ')
@@ -46,20 +47,12 @@ export default async function StudentProfilePage() {
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Practice summary
           </h2>
-          {stats && stats.totalAttempts > 0 ? (
-            <div className="mt-4 space-y-3">
-              <StatRow label="All attempts" value={stats.totalAttempts} />
-              <StatRow label="Average WPM" value={stats.avgWpm} />
-              <StatRow label="Average accuracy" value={`${stats.avgAccuracy}%`} />
-              <StatRow label="Best WPM" value={stats.bestWpm} />
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-muted-foreground">
-              No attempts yet. Complete a dictation to see your stats here.
-            </p>
-          )}
+          <p className="mt-3 text-sm text-muted-foreground">
+            {saved === 1 ? '1 saved dictation result' : `${saved} saved dictation results`}
+          </p>
         </div>
       </div>
+      <ChangePassword />
     </div>
   );
 }
@@ -83,13 +76,3 @@ function Row({
     </div>
   );
 }
-
-function StatRow({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="font-mono font-semibold tabular-nums text-foreground">{value}</span>
-    </div>
-  );
-}
-

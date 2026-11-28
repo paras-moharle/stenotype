@@ -1,4 +1,6 @@
 # Production database release
+
+This runbook records the original seven-migration cutover. For the eighth migration and current retention policy, follow [Single saved dictation results](single-saved-result.md).
 For the alternative endpoint-promotion approach, see the [promotion assessment](database-promotion-assessment.md). It requires separate approval and reconciliation before it replaces this runbook.
 
 

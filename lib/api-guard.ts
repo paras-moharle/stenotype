@@ -12,7 +12,7 @@ import { db } from '@/lib/db';
  */
 
 export type UserGate =
-  | { ok: true; userId: string }
+  | { ok: true; userId: string; sessionId: string }
   | { ok: false; response: Response };
 
 export async function requireUser(): Promise<UserGate> {
@@ -39,7 +39,7 @@ export async function requireUser(): Promise<UserGate> {
     };
   }
 
-  return { ok: true, userId: session.user.id };
+  return { ok: true, userId: session.user.id, sessionId: session.session.id };
 }
 
 export function findStudentProfile(userId: string) {
@@ -50,7 +50,7 @@ export function findStudentProfile(userId: string) {
 }
 
 export type StudentGate =
-  | { ok: true; userId: string; profileId: string }
+  | { ok: true; userId: string; profileId: string; sessionId: string }
   | { ok: false; response: Response };
 
 /**
@@ -84,5 +84,5 @@ export async function requireStudent(): Promise<StudentGate> {
     };
   }
 
-  return { ok: true, userId: gate.userId, profileId: profile.id };
+  return { ok: true, userId: gate.userId, profileId: profile.id, sessionId: gate.sessionId };
 }
