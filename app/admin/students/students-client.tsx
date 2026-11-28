@@ -58,7 +58,8 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
   const [form, setForm] = useState<FormState>(blankForm);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Student | null>(null);
-  const [pending, setPending] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const pending = progress !== null;
   const active = useRef(false);
   const [original, setOriginal] = useState<Student | null>(null);
   const [resetValue, setResetValue] = useState('');
@@ -66,10 +67,10 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
   const [purge, setPurge] = useState<Student | null>(null);
   const [confirmName, setConfirmName] = useState('');
 
-  function startAction() {
+  function startAction(message: string) {
     if (active.current) return false;
     active.current = true;
-    setPending(true);
+    setProgress(message);
     setError(null);
     setToast(null);
     return true;
@@ -77,7 +78,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
 
   function finishAction() {
     active.current = false;
-    setPending(false);
+    setProgress(null);
   }
 
   function openStudent(student: Student) {
@@ -107,7 +108,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!startAction()) return;
+    if (!startAction('Creating account…')) return;
 
     try {
       const res = await fetch('/api/admin/students', {
@@ -150,7 +151,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
     } else if (action === 'access') {
       payload = { action: 'set-access', enabled: disabled, expectedCredentialRevision: student.user.updatedAt };
     }
-    if (!startAction()) return;
+    if (!startAction('Updating account…')) return;
     try {
       const response = await fetch(endpoint, {
         method: action === 'update' ? 'PUT' : 'POST',
@@ -172,7 +173,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
 
   const handleDelete = async (student: Student) => {
     if (pending || !confirm(`Permanently delete ${student.user.name}? 0 saved results will be removed.`)) return;
-    if (!startAction()) return;
+    if (!startAction('Deleting account…')) return;
     try {
       const res = await fetch(`/api/admin/students/${student.id}`, {
         method: 'DELETE',
@@ -180,13 +181,16 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.error ?? 'Failed to delete student');
+        setError(data?.error ?? 'Deletion could not be confirmed. Review the refreshed list before trying again.');
+        if (res.status === 404 || res.status >= 500) list.reload();
+        return;
       }
 
       setToast(`${student.user.name} deleted.`);
+      list.removeConfirmed(row => row.id === student.id);
+    } catch {
+      setError('Deletion was not confirmed. Review the refreshed list before trying again.');
       list.reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete student');
     } finally { finishAction(); }
   };
 
@@ -196,7 +200,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
       setError('Use 8–128 characters or leave the password blank to generate one.');
       return;
     }
-    if (!startAction()) return;
+    if (!startAction('Resetting password…')) return;
     try {
       const response = await fetch(`/api/admin/students/${student.id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -214,7 +218,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
   };
 
   const purgeStudent = async () => {
-    if (!purge || confirmName !== purge.user.name || !startAction()) return;
+    if (!purge || confirmName !== purge.user.name || !startAction('Deleting account and results…')) return;
     try {
       const response = await fetch(`/api/admin/students/${purge.id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -340,6 +344,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
         </div>
       )}
 
+      {progress && !showForm && !editing && !purge && <p role="status">{progress}</p>}
       {list.refreshing && <p role="status" className="text-sm text-muted-foreground">Refreshing students…</p>}
       {loading ? (
         <div className="py-10 text-center text-sm text-muted-foreground">
@@ -394,7 +399,7 @@ export function AdminStudentsClient({ initial }: { initial: AdminListSeed<Studen
               onChange={(event) => setEditing({ ...editing, phone: event.target.value })} /></label>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             <div className="flex flex-wrap gap-2">
-              <Button type="submit" disabled={pending}>{pending ? 'Working…' : 'Save changes'}</Button>
+              <Button type="submit" disabled={pending}>{progress ?? 'Save changes'}</Button>
               <Button type="button" variant="outline" disabled={pending} onClick={dismissManage}>Cancel</Button>
             </div>
             <div className="flex flex-wrap gap-2 border-t border-border pt-4">

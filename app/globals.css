@@ -667,8 +667,10 @@
   .admin-filter-toolbar > .choice-trigger { width: auto; min-width: 10rem; }
 }
 .admin-row-actions {
-  inset: 0;
-  margin: auto;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  visibility: hidden;
   width: max-content;
   max-width: calc(100vw - 1.25rem);
   max-height: calc(100dvh - 1.25rem);
@@ -680,15 +682,7 @@
   color: var(--color-foreground);
   box-shadow: var(--shadow-pop);
 }
-@supports (top: anchor(bottom)) {
-  .admin-row-actions {
-    inset: auto;
-    top: calc(anchor(bottom) + .35rem);
-    right: max(.625rem, anchor(right));
-    position-try-fallbacks: flip-block;
-    margin: 0;
-  }
-}
+.admin-row-actions[data-positioned] { visibility: visible; }
 .admin-row-actions > :is(button, a) {
   display: block;
   width: 100%;

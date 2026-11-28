@@ -15,7 +15,9 @@ export function ChoiceMenu<T extends string>({ label, value, options, onChange, 
 }) {
   const [container, setContainer] = useState<HTMLElement>();
   const setTrigger = useCallback((node: HTMLButtonElement | null) => {
-    if (node) setContainer(node.closest('dialog') ?? undefined);
+    if (!node) return;
+    node.dataset.choiceReady = 'true';
+    setContainer(node.closest('dialog') ?? undefined);
   }, []);
   return (
     <Select.Root name={name} value={value} disabled={disabled} onValueChange={(next) => {

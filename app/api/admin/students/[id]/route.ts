@@ -155,30 +155,47 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const started = performance.now();
   const gate = await requireAdmin(request);
   if (!gate.ok) return gate.response;
-  return removeStudent((await params).id);
+  const timings = [`auth;dur=${(performance.now() - started).toFixed(1)}`];
+  const response = await removeStudent((await params).id, undefined, timings);
+  response.headers.set('Server-Timing', timings.join(', '));
+  return response;
 }
 
-async function removeStudent(id: string, confirmation?: { confirmName: string; expectedResults: number }) {
+async function removeStudent(id: string, confirmation?: { confirmName: string; expectedResults: number }, timings?: string[]) {
+  let started = performance.now();
+  function mark(label: string) {
+    const now = performance.now();
+    timings?.push(`${label};dur=${(now - started).toFixed(1)}`);
+    started = now;
+  }
   try {
     const outcome = await db.$transaction(async tx => {
-      const target = await tx.studentProfile.findUnique({
-        where: { id }, select: { userId: true },
-      });
-      if (!target || !await lockStudentAccount(tx, target.userId)) return { missing: true };
-      const student = await tx.studentProfile.findUnique({
-        where: { id }, select: { user: { select: { name: true } }, _count: { select: { typingAttempts: true } } },
-      });
-      if (!student) return { missing: true };
-      const count = student._count.typingAttempts;
+      mark('transaction_start');
+      // Result writers and account operations serialize on this same user
+      // lock. Count results in the next statement, after the lock is held.
+      const [target] = await tx.$queryRaw<{ userId: string; name: string }[]>`
+        SELECT u.id AS "userId", u.name
+        FROM "StudentProfile" p JOIN "user" u ON u.id = p."userId"
+        WHERE p.id = ${id} AND u.role = 'student'
+        FOR UPDATE OF u
+      `;
+      mark('account_lock');
+      if (!target) return { missing: true };
+      const count = await tx.typingAttempt.count({ where: { studentId: id } });
+      mark('result_check');
       if (!confirmation && count) return { count };
-      if (confirmation && (count !== confirmation.expectedResults || student.user.name !== confirmation.confirmName)) return { stale: true };
+      if (confirmation && (count !== confirmation.expectedResults || target.name !== confirmation.confirmName)) return { stale: true };
       if (confirmation) await tx.typingAttempt.deleteMany({ where: { studentId: id } });
       await tx.loginAttempt.deleteMany({ where: { userId: target.userId } });
+      mark('related_cleanup');
       await tx.user.delete({ where: { id: target.userId } });
+      mark('account_delete');
       return { deleted: count };
     });
+    mark('commit');
     if ('deleted' in outcome) return NextResponse.json({ success: true, deletedResults: outcome.deleted });
     if ('missing' in outcome) return NextResponse.json(NOT_FOUND, { status: 404 });
     if ('stale' in outcome) return NextResponse.json({ error: 'The student or result count changed. Reload before confirming again.' }, { status: 409 });

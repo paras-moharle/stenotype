@@ -85,5 +85,9 @@ export function useAdminList<Row>(resource: 'students' | 'dictations', initial: 
     refreshing: Boolean(current && current.key !== key),
     error: current?.error,
     reload: () => setRevision((value) => value + 1),
+    removeConfirmed(predicate: (row: Row) => boolean) {
+      setSettled(entry => entry && { ...entry, rows: entry.rows.filter(row => !predicate(row)) });
+      setRevision(value => value + 1);
+    },
   };
 }

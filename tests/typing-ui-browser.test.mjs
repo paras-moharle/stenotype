@@ -1,5 +1,7 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
@@ -87,13 +89,22 @@ async function launchChrome() {
   throw new Error('Chromium did not expose a debugging port');
 }
 
-function connect(wsUrl) {
+function connect(wsUrl, testContext) {
   const ws = new WebSocket(wsUrl);
   const pending = new Map();
   let nextId = 0;
+  const consoleErrors = [];
 
   ws.addEventListener('message', (event) => {
     const message = JSON.parse(event.data);
+    if (message.method === 'Runtime.exceptionThrown') {
+      consoleErrors.push(message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text);
+    } else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
+      consoleErrors.push(message.params.args.map(arg => arg.description ?? arg.value ?? arg.type).join(' '));
+    } else if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error') {
+      consoleErrors.push(message.params.entry.text);
+    }
+    if (consoleErrors.length > 20) consoleErrors.shift();
     if (message.id && pending.has(message.id)) {
       const { resolve, reject } = pending.get(message.id);
       pending.delete(message.id);
@@ -105,7 +116,7 @@ function connect(wsUrl) {
   const ready = new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve, { once: true });
     ws.addEventListener('error', reject, { once: true });
-  });
+  }).then(() => Promise.all([send('Runtime.enable'), send('Log.enable')]));
 
   const send = (method, params = {}) =>
     new Promise((resolve, reject) => {
@@ -126,22 +137,78 @@ function connect(wsUrl) {
     return result.result.value;
   };
 
+  const captureFailure = async (reason) => {
+    try {
+      const directory = process.env.STENO_BROWSER_ARTIFACT_DIR ?? join(tmpdir(), 'stenotype-browser-failures');
+      await mkdir(directory, { recursive: true });
+      const stem = join(directory, randomUUID());
+      const state = await evaluate(`(() => {
+        const describe = node => node && ({
+          tag: node.tagName, role: node.getAttribute('role'), label: node.getAttribute('aria-label'),
+          expanded: node.getAttribute('aria-expanded'), disabled: node.disabled ?? false,
+          display: getComputedStyle(node).display, height: getComputedStyle(node).height,
+          fontSize: getComputedStyle(node).fontSize, lineHeight: getComputedStyle(node).lineHeight,
+          hiddenAncestor: Boolean(node.closest('[hidden]')), rect: node.getBoundingClientRect().toJSON(),
+        });
+        return {
+          url: location.pathname, readyState: document.readyState, fonts: document.fonts.status,
+          visibility: document.visibilityState, dimensions: [innerWidth, innerHeight],
+          typingReady: Boolean(document.querySelector('[data-typing-ready]')),
+          active: describe(document.activeElement), viewport: describe(document.querySelector('.typing-line-window')),
+          surface: describe(document.querySelector('.typing-surface')),
+          picker: describe(document.querySelector('[aria-label="Passage length"]')),
+          menu: describe(document.querySelector('[role=listbox]')),
+          dialog: describe(document.querySelector('dialog[open]')),
+        };
+      })()`);
+      const report = { reason, state, consoleErrors: consoleErrors.map(error => String(error).slice(0, 1200)) };
+      await writeFile(stem + '.json', JSON.stringify(report, null, 2));
+      testContext?.diagnostic(`Browser diagnostics: ${JSON.stringify(report)}`);
+      const { data } = await send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(stem + '.png', Buffer.from(data, 'base64'));
+      testContext?.diagnostic(`Browser artifacts: ${stem}.{json,png}`);
+    } catch (error) {
+      testContext?.diagnostic(`Unable to collect browser diagnostics: ${error.message}`);
+    }
+  };
+
   const waitFor = async (expression, timeout = 10_000) => {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       if (await evaluate(expression)) return;
       await sleep(100);
     }
+    await captureFailure(expression);
     throw new Error(`Timed out waiting for: ${expression}`);
   };
 
-  return { ws, send, evaluate, waitFor, ready };
+  return { ws, send, evaluate, waitFor, ready, captureFailure };
+}
+
+const typingReady = "Boolean(document.querySelector('[data-typing-ready]'))";
+
+async function waitForTyping(cdp, path) {
+  await cdp.waitFor(`location.pathname + location.search === ${JSON.stringify(path)} && ${typingReady}`);
+}
+
+async function assertAnchored(cdp, trigger, popup) {
+  const geometry = await cdp.evaluate(`(() => {
+    const anchor = (${trigger}).getBoundingClientRect().toJSON();
+    const menu = document.querySelector(${JSON.stringify(popup)}).getBoundingClientRect().toJSON();
+    return { anchor, menu, width: innerWidth, height: innerHeight };
+  })()`);
+  const { anchor, menu, width, height } = geometry;
+  const overlaps = menu.left < anchor.right && menu.right > anchor.left;
+  const beside = Math.min(Math.abs(menu.top - anchor.bottom), Math.abs(anchor.top - menu.bottom)) <= 14;
+  const fits = menu.left >= 0 && menu.top >= 0 && menu.right <= width + 1 && menu.bottom <= height + 1;
+  if (!overlaps || !beside || !fits) await cdp.captureFailure('Popover position');
+  assert.ok(overlaps && beside && fits, `Popup is not anchored inside the viewport: ${JSON.stringify(geometry)}`);
 }
 
 const readGeometry = `(() => {
   const input = document.querySelector('[data-typing-input]');
   const surface = input.parentElement;
-  const viewport = surface.querySelector('.overflow-hidden');
+  const viewport = surface.querySelector('.typing-line-window');
   const content = viewport.firstElementChild;
   const section = document.querySelector('[aria-label="Typing practice"]');
   const current = viewport.querySelector('span.bg-brand\\\\/10');
@@ -188,7 +255,7 @@ const readGeometry = `(() => {
 
 test('the typing screen is geometrically correct in a real browser', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const cdp = connect(page.webSocketDebuggerUrl);
+  const cdp = connect(page.webSocketDebuggerUrl, t);
 
   t.after(() => {
     try {
@@ -203,15 +270,22 @@ test('the typing screen is geometrically correct in a real browser', { skip }, a
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await cdp.send('Page.navigate', { url: URL_UNDER_TEST });
-  await cdp.waitFor("document.readyState === 'complete'");
+  await waitForTyping(cdp, '/');
   await cdp.waitFor(
-    "!!document.querySelector('[data-typing-input]') && " +
-      "document.querySelectorAll('[data-typing-input]').length === 1"
+    "document.querySelectorAll('[data-typing-input]').length === 1 && " +
+      "Boolean(document.querySelector('.typing-line-window')?.getClientRects().length)"
   );
+  await cdp.evaluate(`(async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  })()`);
 
   const idle = JSON.parse(await cdp.evaluate(readGeometry));
 
   // 1. The window is exactly five whole lines.
+  if (Math.abs(idle.viewport.height - idle.lineHeight * 5) > 1.5) {
+    await cdp.captureFailure('Initial five-line viewport geometry');
+  }
   assert.ok(
     Math.abs(idle.viewport.height - idle.lineHeight * 5) <= 1.5,
     `viewport ${idle.viewport.height}px is not 5 × ${idle.lineHeight}px`
@@ -254,7 +328,7 @@ test('the typing screen is geometrically correct in a real browser', { skip }, a
   const reference = await cdp.evaluate(`(() => {
     const viewport = document
       .querySelector('[data-typing-input]')
-      .parentElement.querySelector('.overflow-hidden');
+      .parentElement.querySelector('.typing-line-window');
     return Array.from(viewport.querySelectorAll('span'))
       .map((span) => span.textContent)
       .join('');
@@ -327,7 +401,7 @@ test('long custom input keeps the caret and correction responsive while the work
   const [name, ...value] = cookie.split(';')[0].split('=');
 
   const { proc, page } = await launchChrome();
-  const cdp = connect(page.webSocketDebuggerUrl);
+  const cdp = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { cdp.ws.close(); proc.kill('SIGKILL'); });
   await cdp.ready;
   await cdp.send('Page.enable');
@@ -344,11 +418,12 @@ test('long custom input keeps the caret and correction responsive while the work
       };`,
   });
   await cdp.send('Page.navigate', { url: `${origin}/student/typing?mode=custom` });
+  await waitForTyping(cdp, '/student/typing?mode=custom');
   const pasteButton = "Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Paste text')";
   await cdp.waitFor(`!!(${pasteButton})`);
   await cdp.evaluate(`(${pasteButton}).click()`);
-  await cdp.waitFor("!!document.querySelector('textarea')");
-  await cdp.evaluate("document.querySelector('textarea').focus()");
+  await cdp.waitFor("!!document.querySelector('dialog[open] textarea')");
+  await cdp.evaluate("document.querySelector('dialog[open] textarea').focus()");
   const reference = 'alpha beta gamma delta '.repeat(175).trim();
   await cdp.send('Input.insertText', { text: reference });
   const startButton = "Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Start')";
@@ -416,7 +491,7 @@ test('authenticated catalog actions load the exact dictation, leaving the active
   });
 
   const { proc, page } = await launchChrome();
-  const cdp = connect(page.webSocketDebuggerUrl);
+  const cdp = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { cdp.ws.close(); proc.kill('SIGKILL'); });
   await cdp.ready;
   await cdp.send('Page.enable');
@@ -460,7 +535,7 @@ test('authenticated catalog actions load the exact dictation, leaving the active
 
 test('public routes fit compact to 4K viewports and theme preference persists', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -558,7 +633,7 @@ test('public routes fit compact to 4K viewports and theme preference persists', 
 
 test('a ready passage captures the first key once and respects other focus', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -649,14 +724,15 @@ test('a ready passage captures the first key once and respects other focus', { s
 
 test('passage picker restores the complete reference and settings reflow by container width', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const cdp = connect(page.webSocketDebuggerUrl);
+  const cdp = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { cdp.ws.close(); proc.kill('SIGKILL'); });
   await cdp.ready;
   await cdp.send('Page.enable');
   await cdp.send('Page.navigate', { url: new URL('/', URL_UNDER_TEST).href });
   const picker = 'document.querySelector(\'[role="combobox"][aria-label="Passage length"]\')';
   const passage = "document.querySelector('.typing-surface .overflow-hidden').textContent";
-  await cdp.waitFor(`document.readyState === 'complete' && !!(${picker})`);
+  await waitForTyping(cdp, '/');
+  await cdp.waitFor(`!!(${picker}) && !(${picker}).disabled`);
   const source = await cdp.evaluate(passage);
   const prefix = source.split(/\s+/).slice(0, 30).join(' ');
   assert.ok(source.length > prefix.length);
@@ -667,8 +743,9 @@ test('passage picker restores the complete reference and settings reflow by cont
     for (const [move, keyCode, expected] of [['End', 35, prefix], ['Home', 36, source]]) {
       await cdp.evaluate(`(${picker}).focus()`);
       await key('Enter', 'Enter', 13);
-      // Radix positions the menu before focusing its current option.
-      await cdp.waitFor("document.activeElement?.getAttribute('role') === 'option'");
+      // Radix positions the portal before moving focus into its open listbox.
+      await cdp.waitFor(`(${picker}).getAttribute('aria-expanded') === 'true' && document.activeElement?.matches('[role=listbox] [role=option]')`);
+      await assertAnchored(cdp, picker, '[role=listbox]');
       await key(move, move, keyCode);
       await cdp.waitFor(`document.activeElement?.textContent.includes(${JSON.stringify(move === 'End' ? 'First 30' : 'Full passage')})`);
       await key('Enter', 'Enter', 13);
@@ -700,7 +777,7 @@ test('passage picker restores the complete reference and settings reflow by cont
 
 test('mobile settings stay compact and focus and rotation preserve an active run', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const cdp = connect(page.webSocketDebuggerUrl);
+  const cdp = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { cdp.ws.close(); proc.kill('SIGKILL'); });
   await cdp.ready;
   await cdp.send('Page.enable');
@@ -730,7 +807,7 @@ test('mobile settings stay compact and focus and rotation preserve an active run
 
 test('restart preserves the passage, category and new passage update it, and the timer expires', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -770,7 +847,7 @@ test('restart preserves the passage, category and new passage update it, and the
 
 test('60-second reference stays fixed through the final character and results share typing colors', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -802,7 +879,7 @@ test('60-second reference stays fixed through the final character and results sh
 
 test('timed results collapse the unreached tail and keep genuine omissions marked', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -882,7 +959,7 @@ test('timed results collapse the unreached tail and keep genuine omissions marke
 
 test('the mobile mistake table loads twenty rows at a time', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -908,7 +985,7 @@ test('the mobile mistake table loads twenty rows at a time', { skip }, async (t)
 
 test('typing underlines stop before separators in both themes', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -959,7 +1036,7 @@ test('typing underlines stop before separators in both themes', { skip }, async 
 
 test('custom practice preserves the applied passage when a draft is cancelled or modes change', { skip }, async (t) => {
   const { proc, page } = await launchChrome();
-  const browser = connect(page.webSocketDebuggerUrl);
+  const browser = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
@@ -1062,7 +1139,7 @@ test('admin filters and action popovers support keyboard and narrow viewports', 
   t.after(() => fetch(origin + '/api/admin/dictations/' + dictation.id, { method: 'DELETE', headers: { ...headers, Cookie: cookie } }));
 
   const { proc, page } = await launchChrome();
-  const cdp = connect(page.webSocketDebuggerUrl);
+  const cdp = connect(page.webSocketDebuggerUrl, t);
   t.after(() => { cdp.ws.close(); proc.kill('SIGKILL'); });
   await cdp.ready;
   await cdp.send('Page.enable');
@@ -1094,14 +1171,12 @@ test('admin filters and action popovers support keyboard and narrow viewports', 
     await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
   };
   const openWithKeyboard = async (selector) => {
-    // The server rows can be visible before the control has hydrated.
-    for (let trial = 0; trial < 40; trial += 1) {
-      if (await cdp.evaluate("!!document.querySelector('[role=listbox]')")) return;
-      await cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.focus()`);
-      await press('Enter');
-      await sleep(100);
-    }
-    assert.fail('The filter did not open with Enter');
+    const control = `document.querySelector(${JSON.stringify(selector)})`;
+    await cdp.waitFor(`(${control})?.dataset.choiceReady === 'true'`);
+    await cdp.evaluate(`(${control}).focus()`);
+    await press('Enter');
+    await cdp.waitFor("document.activeElement?.matches('[role=listbox] [role=option]')");
+    await assertAnchored(cdp, control, '[role=listbox]');
   };
   await openWithKeyboard('[role=combobox][aria-label=Category]');
   assert.equal(listRequests.length, 0, 'first authorized page is rendered without a list API request');
@@ -1119,7 +1194,12 @@ test('admin filters and action popovers support keyboard and narrow viewports', 
 
   await cdp.waitFor(`!(${menuButton}).disabled && !document.querySelector('[role=listbox]')`);
   await cdp.evaluate(`(${menuButton}).focus(); (${menuButton}).click()`);
-  await cdp.waitFor("!!document.querySelector('.admin-row-actions:popover-open')");
+  const popup = '.admin-row-actions:popover-open[data-positioned]';
+  await cdp.waitFor(`!!document.querySelector('${popup}')`);
+  await assertAnchored(cdp, menuButton, popup);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 768, height: 752, deviceScaleFactor: 1, mobile: false });
+  await cdp.waitFor(`Math.abs(document.querySelector('${popup}').getBoundingClientRect().right - (${menuButton}).getBoundingClientRect().right) < 2`);
+  await assertAnchored(cdp, menuButton, popup);
   assert.equal(await cdp.evaluate("document.querySelector('.admin-row-actions:popover-open').textContent.includes('Delete unused dictation')"), true);
   await press('Escape');
   await cdp.waitFor("!document.querySelector('.admin-row-actions:popover-open')");
@@ -1133,4 +1213,54 @@ test('admin filters and action popovers support keyboard and narrow viewports', 
   await cdp.waitFor("document.activeElement?.textContent === 'Failed'");
   await press('Enter');
   await cdp.waitFor("performance.getEntriesByType('resource').some(entry => new URL(entry.name).searchParams.get('success') === 'false')");
+
+  const studentName = 'Disposable action menu fixture';
+  const student = await fetch(origin + '/api/admin/students', {
+    method: 'POST', headers: { ...headers, Cookie: cookie },
+    body: JSON.stringify({ email: crypto.randomUUID() + '@example.test', name: studentName, password: 'local-browser-fixture-password' }),
+  });
+  assert.equal(student.status, 201);
+  const { student: { id } } = await student.json();
+  const deleteUrl = '/api/admin/students/' + id;
+  t.after(() => fetch(origin + deleteUrl, { method: 'DELETE', headers: { ...headers, Cookie: cookie } }));
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 510, deviceScaleFactor: 1, mobile: false });
+  await cdp.send('Page.navigate', { url: origin + '/admin/students' });
+  await cdp.waitFor("document.querySelector('[aria-label=\"Access status\"]')?.dataset.choiceReady === 'true'");
+  const studentMenu = `document.querySelector('[aria-label="More actions for ${studentName}"]')`;
+  await cdp.evaluate(`(${studentMenu}).scrollIntoView({block:'end'}); (${studentMenu}).focus(); (${studentMenu}).click()`);
+  await cdp.waitFor(`!!document.querySelector('${popup}')`);
+  await assertAnchored(cdp, studentMenu, popup);
+  assert.ok(await cdp.evaluate(`document.querySelector('${popup}').getBoundingClientRect().bottom < (${studentMenu}).getBoundingClientRect().top`), 'menu flips above a low trigger');
+
+  const initialTop = await cdp.evaluate(`(${studentMenu}).getBoundingClientRect().top`);
+  await cdp.evaluate('scrollBy(0, -40)');
+  await cdp.waitFor(`(${studentMenu}).getBoundingClientRect().top > ${initialTop} + 10`);
+  await cdp.waitFor(`Math.abs(document.querySelector('${popup}').getBoundingClientRect().bottom - (${studentMenu}).getBoundingClientRect().top) <= 14`);
+  await assertAnchored(cdp, studentMenu, popup);
+
+  const nextEvent = (method) => new Promise(resolve => {
+    const listener = ({ data }) => {
+      const event = JSON.parse(data);
+      if (event.method !== method) return;
+      cdp.ws.removeEventListener('message', listener);
+      resolve(event.params);
+    };
+    cdp.ws.addEventListener('message', listener);
+  });
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*' + deleteUrl, requestStage: 'Response' }] });
+  const paused = nextEvent('Fetch.requestPaused');
+  const confirmation = nextEvent('Page.javascriptDialogOpening');
+  const click = cdp.evaluate("Array.from(document.querySelectorAll('.admin-row-actions:popover-open button')).find(button => button.textContent === 'Delete unused account').click()");
+  await confirmation;
+  await cdp.send('Page.handleJavaScriptDialog', { accept: true });
+  await click;
+  const { requestId, responseStatusCode, request } = await paused;
+  assert.equal(request.method, 'DELETE');
+  assert.equal(responseStatusCode, 200);
+  await cdp.waitFor("Array.from(document.querySelectorAll('[role=status]')).some(node => node.textContent === 'Deleting account…')");
+  assert.ok(await cdp.evaluate(`!!(${studentMenu})`), 'student remains until deletion is confirmed in the browser');
+  await cdp.send('Fetch.continueResponse', { requestId });
+  await cdp.send('Fetch.disable');
+  await cdp.waitFor(`!(${studentMenu}) && document.body.textContent.includes(${JSON.stringify(studentName + ' deleted.')})`);
+
 });
