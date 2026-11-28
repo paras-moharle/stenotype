@@ -7,8 +7,9 @@ test('submission requires a stable key and bounds client elapsed time', () => {
   const attempt = { passageId: 'dictation', typed: 'alpha beta', elapsedMs: 3000 };
   assert.equal(attemptSubmissionSchema.safeParse(attempt).success, false);
   const submissionKey = crypto.randomUUID();
-  assert.equal(attemptSubmissionSchema.safeParse({ ...attempt, submissionKey }).success, true);
-  assert.equal(attemptSubmissionSchema.safeParse({ ...attempt, submissionKey, elapsedMs: 2 ** 31 }).success, false);
+  assert.equal(attemptSubmissionSchema.safeParse({ ...attempt, submissionKey }).success, false);
+  assert.equal(attemptSubmissionSchema.safeParse({ ...attempt, submissionKey, practiceTicket: 'signed-value' }).success, true);
+  assert.equal(attemptSubmissionSchema.safeParse({ ...attempt, submissionKey, practiceTicket: 'signed-value', elapsedMs: 2 ** 31 }).success, false);
 });
 
 test('publication rejects references above the supported character or token budget', () => {

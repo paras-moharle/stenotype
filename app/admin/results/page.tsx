@@ -147,12 +147,12 @@ export default async function AdminResultsPage({
     },
     {
       key: 'completion',
-      header: 'Completion',
+      header: 'Passage covered',
       render: (a: Attempt) => `${a.completion}%`,
     },
     {
       key: 'completed',
-      header: 'Completed',
+      header: 'Fully covered',
       render: (a: Attempt) => (a.completed ? 'Yes' : 'No'),
     },
     {
@@ -174,9 +174,9 @@ export default async function AdminResultsPage({
         <label><span className="field-label">Search student or dictation</span>
           <input name="q" type="search" defaultValue={query} maxLength={120} className="field" />
         </label>
-        <label><span className="field-label">Completion</span>
+        <label><span className="field-label">Passage coverage</span>
           <select name="completed" defaultValue={completion} className="field">
-            <option value="">All results</option><option value="yes">Completed</option><option value="no">Incomplete</option>
+            <option value="">All results</option><option value="yes">Fully covered</option><option value="no">Partially covered</option>
           </select>
         </label>
         <Button type="submit">Apply filters</Button>

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { dictationReferenceDigest, verifyPracticeTicket } from '@/lib/dictation-practice-ticket';
 import { rejectStorageGrowth } from '@/lib/db-capacity';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -40,12 +40,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid submission' }, { status: 400 });
   }
 
-  const { typed, elapsedMs, passageId, submissionKey } = parsed.data;
+  const { typed, elapsedMs, passageId, submissionKey, practiceTicket } = parsed.data;
   const key = { studentId_submissionKey: { studentId: gate.profileId, submissionKey } };
 
   const prior = await db.typingAttempt.findUnique({ where: key, include: { reference: true } });
-  if (prior) return replay(prior);
-  if (!limit.allowed) return throttled();
+  if (!prior && !limit.allowed) return throttled();
+  const ticket = verifyPracticeTicket(practiceTicket, { profileId: gate.profileId, passageId, submissionKey });
+  if (!ticket) return unavailablePractice();
+  if (prior) return replay(prior, ticket.digest);
+  if (ticket.expiresAt <= Date.now()) return unavailablePractice();
   const capacity = await rejectStorageGrowth();
   if (capacity) return capacity;
   if (!(await takeSharedQuota(`attempt:${gate.userId}`, ATTEMPT_RATE_LIMIT.limit, ATTEMPT_RATE_LIMIT.windowMs))) {
@@ -58,15 +61,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Nothing was typed. This attempt was not recorded.' }, { status: 400 });
   }
 
-  const dictation = await db.dictation.findUnique({
-    where: { id: passageId, status: 'PUBLISHED' },
-    select: { id: true, referenceTranscript: true },
+  const publication = ticket.publishedAt ? new Date(ticket.publishedAt) : null;
+  const dictation = await db.dictation.findFirst({
+    where: { id: passageId, status: 'PUBLISHED', publishedAt: publication, youtubeId: ticket.youtubeId },
+    select: { referenceTranscript: true },
   });
-  if (!dictation) return NextResponse.json({ error: 'Dictation not found' }, { status: 404 });
+  if (!dictation) return unavailablePractice();
+
+  const digest = ticket.digest;
+  const transcript = dictationReferenceDigest(dictation.referenceTranscript) === digest
+    ? dictation.referenceTranscript
+    : (await db.dictationReference.findUnique({ where: { digest }, select: { transcript: true } }))?.transcript;
+  if (!transcript || dictationReferenceDigest(transcript) !== digest) return unavailablePractice();
 
   let score;
   try {
-    score = scoreFromAlignment(align(dictation.referenceTranscript, typed), elapsedMs);
+    score = scoreFromAlignment(align(transcript, typed), elapsedMs);
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;
     return NextResponse.json({ error: 'This text exceeds the scoring budget.' }, { status: 400 });
@@ -82,9 +92,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const transcript = dictation.referenceTranscript;
-    const digest = createHash('sha256').update(transcript, 'utf8').digest('hex');
     const attempt = await db.$transaction(async (tx) => {
+      // Score outside the transaction. At persistence, lock only the current
+      // publication row so an archive, unpublish or delete cannot race the write.
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "Dictation"
+        WHERE "id" = ${passageId} AND "status" = 'PUBLISHED'
+          AND "publishedAt" IS NOT DISTINCT FROM ${publication}::timestamptz
+          AND "youtubeId" IS NOT DISTINCT FROM ${ticket.youtubeId}::text
+        FOR SHARE
+      `;
+      if (rows.length === 0) return null;
+
       await tx.dictationReference.createMany({
         data: { digest, transcript },
         skipDuplicates: true,
@@ -92,7 +111,7 @@ export async function POST(request: Request) {
       return tx.typingAttempt.create({
         data: {
           studentId: gate.profileId,
-          dictationId: dictation.id,
+          dictationId: passageId,
           submissionKey,
           referenceDigest: digest,
           scoreVersion: 1,
@@ -106,20 +125,27 @@ export async function POST(request: Request) {
         },
       });
     });
-    return result(attempt, transcript);
+    return attempt ? result(attempt, transcript) : unavailablePractice();
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
     const winner = await db.typingAttempt.findUnique({ where: key, include: { reference: true } });
     if (!winner) throw error;
-    return replay(winner);
+    return replay(winner, digest);
   }
 
-  function replay(attempt: TypingAttempt & { reference: { transcript: string } | null }) {
-    if (attempt.dictationId !== passageId || attempt.typedText !== typed || attempt.elapsedMs !== elapsedMs) {
+  function replay(attempt: TypingAttempt & { reference: { transcript: string } | null }, digest: string) {
+    if (attempt.referenceDigest !== digest || attempt.dictationId !== passageId || attempt.typedText !== typed || attempt.elapsedMs !== elapsedMs) {
       return NextResponse.json({ error: 'This submission key belongs to a different attempt.' }, { status: 409 });
     }
     return result(attempt, attempt.reference?.transcript ?? attempt.referenceSnapshot);
   }
+}
+
+function unavailablePractice() {
+  return NextResponse.json({
+    code: 'PRACTICE_UNAVAILABLE',
+    error: 'This dictation revision is unavailable for evaluation. Your transcription is still here.',
+  }, { status: 409 });
 }
 
 function result(attempt: TypingAttempt, reference: string | null) {

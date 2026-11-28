@@ -369,6 +369,18 @@ test('long custom input keeps the caret and correction responsive while the work
   assert.ok(geometry.current, 'caret remains visible after correction');
   await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
   await cdp.waitFor("!!document.querySelector('[aria-label=\"Passage coloured by result\"] span')");
+  await cdp.evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Try again').click()");
+  await cdp.waitFor("!!document.querySelector('[data-typing-input]')");
+  await cdp.evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === '15s').click()");
+  await cdp.waitFor("document.querySelector('[data-typing-clock]').textContent === '0:15'");
+  assert.equal(await cdp.evaluate("document.querySelector('.typing-line-window').textContent"), reference);
+  await cdp.evaluate("document.querySelector('[data-typing-input]').focus()");
+  await cdp.send('Input.insertText', { text: 'alpha beta gamma delta' });
+  await cdp.evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Submit').click()");
+  const remaining = "Array.from(document.querySelectorAll('details')).find(item => item.querySelector('summary')?.textContent.startsWith('Show remaining reference'))";
+  await cdp.waitFor(`!!(${remaining})`);
+  assert.equal(await cdp.evaluate(`(${remaining}).open`), false);
+
 });
 
 test('authenticated catalog actions load the exact dictation, leaving the active workspace blind', {
@@ -430,6 +442,20 @@ test('authenticated catalog actions load the exact dictation, leaving the active
   assert.equal(await cdp.evaluate("new URL(location.href).searchParams.get('dictationId')"), dictation.id);
   assert.equal(await cdp.evaluate(`document.body.textContent.includes(${JSON.stringify(transcript)})`), false);
   assert.equal(await cdp.evaluate("!!document.querySelector('[data-typing-input]')"), true);
+  const typed = 'Keep this unsaved transcription.';
+  await cdp.evaluate("document.querySelector('[data-typing-input]').focus()");
+  await cdp.send('Input.insertText', { text: typed });
+  const revoked = await fetch(`${origin}/api/admin/dictations/${dictation.id}`, {
+    method: 'PUT', headers: { ...headers, Cookie: admin }, body: JSON.stringify({ status: 'DRAFT' }),
+  });
+  assert.equal(revoked.status, 200);
+  await cdp.evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Finish and evaluate').click()");
+  await cdp.waitFor("document.body.textContent.includes('This dictation revision is unavailable')");
+  await cdp.evaluate("Array.from(document.querySelectorAll('summary')).find(item => item.textContent === 'Copy your transcription').click()");
+  assert.equal(await cdp.evaluate("document.querySelector('textarea[aria-label=\"Your unsaved transcription\"]').value"), typed);
+  assert.equal(await cdp.evaluate("document.body.textContent.includes('Retry evaluation')"), false);
+  assert.equal(await cdp.evaluate(`document.body.textContent.includes(${JSON.stringify(transcript)})`), false);
+
 });
 
 test('public routes fit compact to 4K viewports and theme preference persists', { skip }, async (t) => {
@@ -454,7 +480,7 @@ test('public routes fit compact to 4K viewports and theme preference persists', 
         });
         if (path !== '/missing-preview') {
           const navigation = await browser.evaluate(`Array.from(document.querySelectorAll('nav[aria-label="Main navigation"] a'))
-            .filter(link => ['Practice', 'About', 'Sign in'].includes(link.textContent.trim()))
+            .filter(link => link.getBoundingClientRect().width > 0)
             .map(link => ({ height: link.getBoundingClientRect().height, active: link.getAttribute('aria-current'), path: link.pathname }))`);
           assert.ok(navigation.every(item => item.height >= 44));
           assert.equal(navigation.find(item => item.path === path)?.active, 'page');
@@ -602,6 +628,14 @@ test('a ready passage captures the first key once and respects other focus', { s
 
   await browser.evaluate(`Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Restart').click()`);
   await browser.waitFor(`(${input}).value === '' && (${clock}).textContent === '0:30'`);
+  await browser.evaluate(`(${input}).focus()`);
+  await browser.send('Input.imeSetComposition', { text: 'é', selectionStart: 1, selectionEnd: 1 });
+  await sleep(1100);
+  assert.equal(await browser.evaluate(`(${clock}).textContent`), '0:30', 'an IME draft started the timer');
+  await browser.send('Input.insertText', { text: 'é' });
+  await browser.waitFor(`(${input}).value === 'é' && (${clock}).textContent === '0:29'`);
+  await browser.evaluate(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Restart').click()`);
+  await browser.waitFor(`(${input}).value === '' && (${clock}).textContent === '0:30'`);
   await press('z', 'KeyZ', 90, 'z');
   await browser.waitFor(`(${input}).value === 'z'`);
   await press('Enter', 'Enter', 13);
@@ -648,6 +682,8 @@ test('passage picker restores the complete reference and settings reflow by cont
 
   for (const width of [320, 360, 390, 430, 600, 640, 700, 768, 800, 900, 960, 1024, 1100, 1280, 1440, 1920, 2560, 3840]) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    const summary = "document.querySelector('.practice-summary')";
+    if (width === 320) await cdp.evaluate(`(${summary}).click()`);
     const [mode, topic, length, time] = await cdp.evaluate("['mode','topic','length','time'].map(name => document.querySelector('.practice-' + name).offsetTop)");
     assert.equal(topic, length);
     if (width <= 430) assert.ok(mode < topic && topic < time);
@@ -660,6 +696,36 @@ test('passage picker restores the complete reference and settings reflow by cont
   await cdp.evaluate("document.querySelector('[data-typing-input]').focus()");
   await cdp.send('Input.insertText', { text: await cdp.evaluate(passage) });
   await cdp.waitFor("!!document.querySelector('[aria-label=\"Passage coloured by result\"]')");
+});
+
+test('mobile settings stay compact and focus and rotation preserve an active run', { skip }, async (t) => {
+  const { proc, page } = await launchChrome();
+  const cdp = connect(page.webSocketDebuggerUrl);
+  t.after(() => { cdp.ws.close(); proc.kill('SIGKILL'); });
+  await cdp.ready;
+  await cdp.send('Page.enable');
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 393, height: 660, deviceScaleFactor: 1, mobile: true });
+  await cdp.send('Page.navigate', { url: URL_UNDER_TEST });
+  const summary = "document.querySelector('.practice-summary')";
+  const input = "document.querySelector('[data-typing-input]')";
+  const options = "document.getElementById('free-practice-options')";
+  await cdp.waitFor(`document.readyState === 'complete' && !!(${input})`);
+  assert.equal(await cdp.evaluate(`(${summary}).getAttribute('aria-expanded')`), 'false');
+  assert.equal(await cdp.evaluate(`getComputedStyle(${options}).display`), 'none');
+  assert.ok(await cdp.evaluate("document.querySelector('.typing-line-window').getBoundingClientRect().bottom < innerHeight"));
+  await cdp.evaluate(`(${summary}).click()`);
+  await cdp.waitFor(`(${summary}).getAttribute('aria-expanded') === 'true'`);
+  assert.equal(await cdp.evaluate(`getComputedStyle(${options}).display`), 'contents');
+  await cdp.evaluate(`(${summary}).click(); (${input}).focus()`);
+  assert.equal(await cdp.evaluate("document.querySelector('[data-typing-clock]').textContent"), '0:30');
+  await cdp.send('Input.insertText', { text: 'some text' });
+  await cdp.waitFor(`(${input}).value === 'some text' && !!Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Restart')`);
+  await cdp.evaluate(`(${summary}).click()`);
+  await cdp.waitFor(`(${summary}).getAttribute('aria-expanded') === 'true'`);
+  assert.equal(await cdp.evaluate(`document.querySelector('[aria-label="Passage topic"]').disabled`), true);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 740, height: 350, deviceScaleFactor: 1, mobile: true });
+  assert.equal(await cdp.evaluate(`(${input}).value`), 'some text');
 });
 
 test('restart preserves the passage, category and new passage update it, and the timer expires', { skip }, async (t) => {
@@ -726,7 +792,7 @@ test('60-second reference stays fixed through the final character and results sh
   await browser.waitFor("!!document.querySelector('[aria-label=\"Passage coloured by result\"]')");
   await browser.waitFor("!!document.querySelector('table th.text-typing-correct')");
   const colors = await browser.evaluate(`Array.from(document.querySelectorAll('table tr')).map(row =>
-    Array.from(row.cells).slice(2).map(cell => getComputedStyle(cell).color))`);
+    Array.from(row.cells).slice(1, 5).map(cell => getComputedStyle(cell).color))`);
   assert.equal(colors.length, 4); // Header, Words, Punctuation, All scored items.
   for (const row of colors) {
     assert.deepEqual(row, ['rgb(34, 197, 94)', 'rgb(255, 84, 84)', 'rgb(250, 204, 21)', 'rgb(255, 84, 84)']);
@@ -740,7 +806,7 @@ test('timed results collapse the unreached tail and keep genuine omissions marke
   t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
   await browser.ready;
   await browser.send('Page.enable');
-  await browser.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+  await browser.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
   await browser.send('Emulation.setDeviceMetricsOverride', { width: 800, height: 1000, deviceScaleFactor: 1, mobile: false });
   await browser.send('Page.navigate', { url: new URL('/', URL_UNDER_TEST).href });
   const comparison = "document.querySelector('[aria-label=\"Passage coloured by result\"]')";
@@ -760,7 +826,7 @@ test('timed results collapse the unreached tail and keep genuine omissions marke
   await browser.evaluate("document.querySelector('[data-typing-input]').focus()");
   await browser.send('Input.insertText', { text: firstWords });
   await browser.waitFor(`!!(${comparison})`, 20_000);
-  const remaining = `${comparison}.parentElement.querySelector('details')`;
+  const remaining = `Array.from((${comparison}).parentElement.querySelectorAll('details')).find(item => item.querySelector('summary')?.textContent.startsWith('Show remaining reference'))`;
   assert.equal(await browser.evaluate(`${remaining}.open`), false);
   assert.equal(await browser.evaluate(`${comparison}.querySelectorAll('.text-typing-missed').length`), 0);
   assert.equal(await browser.evaluate(`${comparison}.textContent + ${remaining}.querySelector('p').textContent`), reference);
@@ -779,6 +845,65 @@ test('timed results collapse the unreached tail and keep genuine omissions marke
   await browser.waitFor(`!!(${comparison})`);
   assert.ok(await browser.evaluate(`${comparison}.querySelector('.text-typing-missed')?.textContent.trim()`));
   await capture('skipped-word');
+
+  await browser.evaluate("Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim() === 'Try again').click()");
+  await browser.waitFor(`!!(${source})`);
+  const match = /[A-Za-z]+/.exec(reference);
+  assert.ok(match);
+  const changed = match[0][0] === match[0][0].toUpperCase() ? match[0].toLowerCase() : match[0].toUpperCase();
+  const changedReference = reference.slice(0, match.index) + changed + reference.slice(match.index + match[0].length);
+  await browser.evaluate("document.querySelector('[data-typing-input]').focus()");
+  await browser.send('Input.insertText', { text: changedReference + ' qqzz' });
+  await browser.evaluate("Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim() === 'Submit').click()");
+  await browser.waitFor(`!!(${comparison})`);
+  assert.equal(await browser.evaluate(`${comparison}.querySelector('.line-through')?.textContent`), 'qqzz');
+  const wrong = `${comparison}.querySelector('button[aria-expanded=false]')`;
+  await browser.waitFor(`!!(${wrong})`);
+  const beforeLayout = await browser.evaluate(`(${comparison}).offsetTop + ':' + (${comparison}).clientHeight`);
+  await browser.evaluate(`(${wrong}).focus()`);
+  await browser.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+  await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+  const detail = `document.getElementById((${comparison}).querySelector('button[aria-expanded=true]')?.getAttribute('aria-controls'))`;
+  await browser.waitFor(`(${detail})?.textContent.includes(${JSON.stringify(changed)})`);
+  assert.equal(await browser.evaluate(`(${comparison}).querySelectorAll('[role=status]').length`), 0);
+  assert.equal(await browser.evaluate(`(${detail}).querySelectorAll('dd').length`), 2);
+  assert.equal(await browser.evaluate(`(${comparison}).offsetTop + ':' + (${comparison}).clientHeight`), beforeLayout);
+  const mistakeSummary = `Array.from((${comparison}).parentElement.querySelectorAll('summary')).find(item => item.textContent.startsWith('Review all mistakes'))`;
+  const mistakeDetails = `(${mistakeSummary}).parentElement`;
+  assert.equal(await browser.evaluate(`(${mistakeDetails}).open`), false);
+  await browser.evaluate(`(${mistakeSummary}).click()`);
+  await browser.waitFor(`(${mistakeDetails}).querySelectorAll('tbody tr').length === 2`);
+  const rows = await browser.evaluate(`Array.from((${mistakeDetails}).querySelectorAll('tbody tr'), row => Array.from(row.cells, cell => cell.textContent.trim()))`);
+  assert.deepEqual(rows, [[match[0], changed], ['Extra item', 'qqzz']]);
+  assert.equal(await browser.evaluate(`(${comparison}).querySelector('button[aria-expanded=true]') !== null`), true);
+  await capture('inline-corrections');
+
+});
+
+test('the mobile mistake table loads twenty rows at a time', { skip }, async (t) => {
+  const { proc, page } = await launchChrome();
+  const browser = connect(page.webSocketDebuggerUrl);
+  t.after(() => { browser.ws.close(); proc.kill('SIGKILL'); });
+  await browser.ready;
+  await browser.send('Page.enable');
+  await browser.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 820, deviceScaleFactor: 1, mobile: true });
+  await browser.send('Page.navigate', { url: URL_UNDER_TEST });
+  const preview = "document.querySelector('.reference-preview p')?.textContent";
+  await browser.waitFor(`document.readyState === 'complete' && !!(${preview})`);
+  const reference = await browser.evaluate(preview);
+  const incorrect = reference.replace(/[A-Za-z0-9]+(?:['-][A-Za-z0-9]+)*/g, word => 'z'.repeat(word.length));
+  await browser.evaluate("document.querySelector('[data-typing-input]').focus()");
+  await browser.send('Input.insertText', { text: incorrect });
+  await browser.evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Submit').click()");
+  const summary = "Array.from(document.querySelectorAll('summary')).find(item => item.textContent.startsWith('Review all mistakes'))";
+  const rows = `(${summary}).parentElement.querySelectorAll('tbody tr').length`;
+  await browser.waitFor(`!!(${summary})`);
+  assert.equal(await browser.evaluate(rows), 0);
+  await browser.evaluate(`(${summary}).click()`);
+  await browser.waitFor(`${rows} === 20`);
+  await browser.evaluate(`(${summary}).parentElement.querySelector('button').click()`);
+  await browser.waitFor(`${rows} === 40`);
+  assert.ok(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'));
 });
 
 test('typing underlines stop before separators in both themes', { skip }, async (t) => {
@@ -819,9 +944,8 @@ test('typing underlines stop before separators in both themes', { skip }, async 
     await browser.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Submit').click()");
     await browser.waitFor("!!document.querySelector('[aria-label=\"Passage coloured by result\"] .typing-wrong')");
     const review = await browser.evaluate(excluded);
-    const styles = await browser.evaluate(`Array.from(document.querySelectorAll('[aria-label="Passage coloured by result"] span'))
-      .filter(span => span.matches('.typing-wrong, .decoration-dashed.underline'))
-      .map(span => getComputedStyle(span).textDecorationStyle)`);
+    const styles = await browser.evaluate(`Array.from(document.querySelectorAll('[aria-label="Passage coloured by result"] :is(.typing-wrong, .decoration-dashed.underline)'))
+      .map(item => getComputedStyle(item).textDecorationStyle)`);
     await browser.evaluate("document.querySelector('[aria-label=\"Passage coloured by result\"]').scrollIntoView({ block: 'center' })");
     await capture('underline-review-' + theme);
     results.push({ theme, live, review, styles });

@@ -166,7 +166,9 @@ test('local admin policy, provisioning and idempotent dictation history', {
   const { dictation } = await published.json();
   const metadata = await call(`/api/dictations?id=${dictation.id}`, { cookie: studentCookie });
   assert.equal(metadata.status, 200);
-  const { dictation: selected } = await metadata.json();
+  const { dictation: selected, practice: ticket } = await metadata.json();
+  assert.match(metadata.headers.get('cache-control'), /no-store/);
+  assert.ok(ticket.practiceTicket);
   assert.equal(selected.id, dictation.id);
   assert.equal(Object.hasOwn(selected, 'referenceTranscript'), false);
   const catalog = await call('/student/dictations?q=CI+dictation', { cookie: studentCookie });
@@ -191,9 +193,13 @@ test('local admin policy, provisioning and idempotent dictation history', {
   assert.equal(studyData.transcript, transcript);
   assert.deepEqual(studyData.dictation, selected);
 
-  const body = {
-    passageId: dictation.id, typed: transcript, elapsedMs: 60_000, submissionKey: crypto.randomUUID(),
-  };
+  // Edit before any attempt exists. The previous revision must come from
+  // the admin edit transaction, not from an already persisted result.
+  const transcriptEdit = await call(`/api/admin/dictations/${dictation.id}`, {
+    method: 'PUT', cookie: admin, body: { referenceTranscript: 'An updated practice passage.' },
+  });
+  assert.equal(transcriptEdit.status, 200);
+  const body = { ...ticket, passageId: dictation.id, typed: transcript, elapsedMs: 60_000 };
   const posts = await Promise.all([1, 2].map(() =>
     call('/api/attempts', { method: 'POST', cookie: studentCookie, body })
   ));
@@ -201,11 +207,13 @@ test('local admin policy, provisioning and idempotent dictation history', {
   const [result, duplicate] = await Promise.all(posts.map((response) => response.json()));
   assert.equal(result.attemptId, duplicate.attemptId);
   assert.equal(result.score.accuracy, 100);
+  assert.equal(result.reference, transcript);
 
   const editorRead = await call(`/api/admin/dictations/${dictation.id}`, { cookie: admin });
   const editorVersion = (await editorRead.json()).dictation.updatedAt;
+  const recordingTicket = (await (await call(`/api/dictations?id=${dictation.id}`, { cookie: studentCookie })).json()).practice;
   const edit = await call(`/api/admin/dictations/${dictation.id}`, {
-    method: 'PUT', cookie: admin, body: { referenceTranscript: 'An updated practice passage.', youtubeId: 'abcdefghijk' },
+    method: 'PUT', cookie: admin, body: { youtubeId: 'abcdefghijk' },
   });
   assert.equal(edit.status, 200);
   assert.equal((await edit.json()).dictation.durationSeconds, null);
@@ -216,9 +224,14 @@ test('local admin policy, provisioning and idempotent dictation history', {
   const retry = await call('/api/attempts', { method: 'POST', cookie: studentCookie, body });
   assert.equal(retry.status, 200);
   assert.equal((await retry.json()).reference, transcript);
-  // The first two replies and the immutable-reference replay used three
-  // slots. Saturate the normal per-process budget using the original key.
-  for (let index = 0; index < 27; index++) {
+  const supersededRecording = await call('/api/attempts', {
+    method: 'POST', cookie: studentCookie, body: { ...body, ...recordingTicket },
+  });
+  assert.equal(supersededRecording.status, 409);
+  assert.equal((await supersededRecording.json()).code, 'PRACTICE_UNAVAILABLE');
+  // Two commits/replays, one recovery, and one rejected recording used
+  // four slots. Saturate the remaining per-process budget.
+  for (let index = 0; index < 26; index++) {
     const replay = await call('/api/attempts', { method: 'POST', cookie: studentCookie, body });
     assert.equal(replay.status, 200);
   }
@@ -247,12 +260,45 @@ test('local admin policy, provisioning and idempotent dictation history', {
   const history = await call(`/api/student/attempts?dictationId=${dictation.id}`, { cookie: studentCookie });
   assert.equal((await history.json()).attempts.length, 1);
 
+  const post = (input) => call('/api/attempts', { method: 'POST', cookie: otherStudent, body: input });
+  assert.equal((await post(body)).status, 409, 'another student cannot use the signed ticket');
+  const fresh = (await (await call(`/api/dictations?id=${dictation.id}`, { cookie: otherStudent })).json()).practice;
+  const unsaved = { ...body, ...fresh };
+  assert.equal((await post({ ...unsaved, practiceTicket: fresh.practiceTicket + 'x' })).status, 409);
+  assert.equal((await post({ ...unsaved, submissionKey: crypto.randomUUID() })).status, 409);
+  assert.equal((await post({ ...unsaved, passageId: 'different-dictation' })).status, 409);
+
   const unpublish = await call(`/api/admin/dictations/${dictation.id}`, {
     method: 'PUT', cookie: admin, body: { status: 'DRAFT' },
   });
   assert.equal(unpublish.status, 200);
   assert.equal((await call(studyPath, { cookie: studentCookie })).status, 404);
   assert.equal((await call(`/api/dictations?id=${dictation.id}`, { cookie: studentCookie })).status, 404);
+
+  assert.equal((await post(unsaved)).status, 409);
+  assert.equal((await call(`/api/admin/dictations/${dictation.id}`, {
+    method: 'PUT', cookie: admin, body: { status: 'PUBLISHED' },
+  })).status, 200);
+  assert.equal((await post(unsaved)).status, 409, 'a prior publication cannot be reused after republishing');
+
+  const disappearing = await call('/api/admin/dictations', {
+    method: 'POST', cookie: admin, body: { title: 'Disposable deletion test', category: 'LEGAL', referenceTranscript: transcript, status: 'PUBLISHED' },
+  });
+  assert.equal(disappearing.status, 201);
+  const disappearingId = (await disappearing.json()).dictation.id;
+  const loadDisappearing = async () =>
+    (await (await call(`/api/dictations?id=${disappearingId}`, { cookie: otherStudent })).json()).practice;
+  const beforeArchive = await loadDisappearing();
+  const changeStatus = (status) => call(`/api/admin/dictations/${disappearingId}`, { method: 'PUT', cookie: admin, body: { status } });
+  assert.equal((await changeStatus('ARCHIVED')).status, 200);
+  assert.equal((await post({ ...body, ...beforeArchive, passageId: disappearingId })).status, 409);
+  assert.equal((await changeStatus('PUBLISHED')).status, 200);
+  assert.equal((await post({ ...body, ...beforeArchive, passageId: disappearingId })).status, 409);
+  const beforeDelete = await loadDisappearing();
+  assert.equal((await call(`/api/admin/dictations/${disappearingId}`, { method: 'DELETE', cookie: admin })).status, 200);
+  assert.equal((await post({ ...body, ...beforeDelete, passageId: disappearingId })).status, 409);
+  const emptyHistory = await call('/api/student/attempts', { cookie: otherStudent });
+  assert.deepEqual((await emptyHistory.json()).attempts, []);
 
   const status = await call(`/api/admin/students/${student.id}`, {
     method: 'PUT', cookie: admin, body: { status: 'INACTIVE' },

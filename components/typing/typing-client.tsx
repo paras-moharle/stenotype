@@ -9,7 +9,7 @@ import {
   useLayoutEffect,
 } from 'react';
 import { CompletionPanel } from './completion-panel';
-import { createSubmissionKey, useDictationSubmission } from './use-dictation-submission';
+import { useDictationSubmission, type PracticeTicket } from './use-dictation-submission';
 import { useTypingAlignment } from './use-typing-alignment';
 import { useTypingClock } from './use-typing-clock';
 import Link from 'next/link';
@@ -26,6 +26,7 @@ import {
   EyeOff,
   Sparkles,
   ClipboardPaste,
+  ChevronDown,
   Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -74,6 +75,23 @@ const CATEGORIES: { value: Category; label: string }[] = [
   { value: 'General', label: 'General' },
 ];
 
+function DurationControls({ value, disabled, onChange }: {
+  value: Duration;
+  disabled: boolean;
+  onChange: (duration: Duration) => void;
+}) {
+  return <>
+    <p className="control-caption">Time limit</p>
+    <div className="practice-track" role="group" aria-label="Test duration"
+      style={{ '--slots': DURATIONS.length, '--selected': DURATIONS.indexOf(value) } as React.CSSProperties}>
+      {DURATIONS.map(item => <button key={item} type="button" aria-pressed={value === item} disabled={disabled}
+        onClick={() => onChange(item)}>
+        {item ? item + 's' : 'Off'}
+      </button>)}
+    </div>
+  </>;
+}
+
 export type TypingClientProps = {
   variant?: 'public' | 'student';
   initialMode?: Mode;
@@ -107,13 +125,13 @@ export default function TypingClient({
 
   const [mode, setMode] = useState<Mode>(initialMode);
   const [duration, setDuration] = useState<Duration>(30);
+  const [customDuration, setCustomDuration] = useState<Duration>(0);
   const [passageLength, setPassageLength] = useState<'full' | 'short'>('full');
   const [category, setCategory] = useState<Category>('mixed');
 
-  // Dictations fetched from API (metadata only, no transcripts).
-  // Transcripts are fetched server-side during scoring.
+  // Loading practice returns metadata and a signed ticket, never the reference.
   const dictationId = initialDictationId ?? '';
-  const [dictation, setDictation] = useState<DictationMetadata | null>(null);
+  const [dictation, setDictation] = useState<(DictationMetadata & { practice: PracticeTicket }) | null>(null);
   const [dictationsState, setDictationsState] = useState<'loading' | 'ready' | 'unavailable' | 'error'>('loading');
   const [catalogRequest, setCatalogRequest] = useState(0);
   useEffect(() => {
@@ -126,9 +144,13 @@ export default function TypingClient({
           setDictationsState(response.status === 404 || response.status === 400 ? 'unavailable' : 'error');
           return;
         }
-        const data: { dictation: DictationMetadata } = await response.json();
+        const data: { dictation: DictationMetadata; practice: PracticeTicket } = await response.json();
         if (controller.signal.aborted) return;
-        setDictation(data.dictation);
+        if (!data.practice?.practiceTicket || !data.practice.submissionKey) {
+          setDictationsState('error');
+          return;
+        }
+        setDictation({ ...data.dictation, practice: data.practice });
         setDictationsState('ready');
       })
       .catch(() => { if (!controller.signal.aborted) setDictationsState('error'); });
@@ -146,20 +168,25 @@ export default function TypingClient({
   const [passage, setPassage] = useState(initialPassage);
 
   const [typed, setTyped] = useState('');
+  const [compositionDraft, setCompositionDraft] = useState<string | null>(null);
+  const composing = useRef(false);
+  const compositionCommit = useRef<string | null>(null);
   const [state, setState] = useState<TestState>('idle');
-  const timed = mode === 'free' && passageLength === 'full' && duration > 0;
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const activeDuration = mode === 'custom' ? customDuration : mode === 'free' && passageLength === 'full' ? duration : 0;
+  const timed = activeDuration > 0;
   const onFinish = useCallback(() => setState('complete'), []);
   const { deadline, elapsedMs, finish, reset: resetClock, start: startClock } =
-    useTypingClock(state === 'running', duration, timed, onFinish);
+    useTypingClock(state === 'running', activeDuration, timed, onFinish);
   const [showFreeReference, setShowFreeReference] = useState(true);
   const showReference = mode === 'free' ? showFreeReference : mode === 'custom' && !customBlind;
   const [blindConfirm, setBlindConfirm] = useState<null | 'enable' | 'disable'>(
     null
   );
-  const [submissionRun, setSubmissionRun] = useState<{ key: string; passageId: string } | null>(null);
+  const [submissionRun, setSubmissionRun] = useState<(PracticeTicket & { passageId: string }) | null>(null);
   const submission = useMemo(() => (
     state === 'complete' && mode === 'dictation' && submissionRun && submissionRun.passageId === selectedDictationId
-      ? { submissionKey: submissionRun.key, passageId: selectedDictationId, typed, elapsedMs }
+      ? { ...submissionRun, typed, elapsedMs }
       : null
   ), [state, mode, selectedDictationId, submissionRun, typed, elapsedMs]);
   const dictationScore = useDictationSubmission(submission);
@@ -242,8 +269,11 @@ export default function TypingClient({
   }, [mode, passage, category, duration, changePassage]);
 
   useEffect(() => {
-    // Switching mode or dictation resets the run.
+    // Switching mode or dictation resets the run and any pending input.
     // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCompositionDraft(null);
+    composing.current = false;
+    compositionCommit.current = null;
     setTyped('');
     setState('idle');
     resetClock();
@@ -263,7 +293,7 @@ export default function TypingClient({
     setTyped('');
     setState('idle');
     resetClock();
-  }, [duration, resetClock]);
+  }, [activeDuration, resetClock]);
 
   useEffect(() => {
     if (state !== 'running' || !usesAnchoredAutoFinish(mode, reference.length)) {
@@ -331,10 +361,10 @@ export default function TypingClient({
 
     setState('running');
     startClock();
-    if (mode === 'dictation' && selectedDictationId) {
-      setSubmissionRun({ key: createSubmissionKey(), passageId: selectedDictationId });
+    if (mode === 'dictation' && dictation) {
+      setSubmissionRun({ ...dictation.practice, passageId: dictation.id });
     }
-  }, [mode, selectedDictationId, startClock, state]);
+  }, [dictation, mode, startClock, state]);
 
   const commitTyped = useCallback(
     (next: string) => {
@@ -362,10 +392,42 @@ export default function TypingClient({
     [deadline, finish, mode, reference, selectedDictationId, startIfIdle]
   );
 
+  useEffect(() => {
+    const visual = window.visualViewport;
+    if (!visual || state === 'complete' || !window.matchMedia('(pointer: coarse)').matches) return;
+    let frame = 0;
+    const keepCaretVisible = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input || document.activeElement !== input || visual.scale !== 1 || window.innerHeight - visual.height < 100) return;
+        const caret = currentCharRef.current?.getBoundingClientRect();
+        const top = caret?.top ?? input.getBoundingClientRect().top;
+        const bottom = caret?.bottom ?? top + 48;
+        const min = visual.offsetTop + 12;
+        const max = visual.offsetTop + visual.height - 16;
+        if (bottom > max) window.scrollBy(0, bottom - max);
+        else if (top < min) window.scrollBy(0, top - min);
+      });
+    };
+    visual.addEventListener('resize', keepCaretVisible);
+    return () => {
+      visual.removeEventListener('resize', keepCaretVisible);
+      cancelAnimationFrame(frame);
+    };
+  }, [state]);
+
   const handleInput = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (state === 'complete') return;
 
-    commitTyped(event.target.value);
+    const value = event.target.value;
+    if (composing.current) {
+      setCompositionDraft(value);
+      return;
+    }
+    const duplicate = compositionCommit.current === value;
+    compositionCommit.current = null;
+    if (!duplicate && value !== typed) commitTyped(value);
   };
 
   const restoreTypingFocus = useCallback(() => {
@@ -380,14 +442,20 @@ export default function TypingClient({
   }, []);
 
   const restart = useCallback(() => {
+    composing.current = false;
+    compositionCommit.current = null;
+    setCompositionDraft(null);
     setTyped('');
     setState('idle');
     resetClock();
-    // A fresh dictation run must be re-scored from the transcript the
-    // server holds, not the one fetched for the previous review.
     setSubmissionRun(null);
-    restoreTypingFocus();
-  }, [resetClock, restoreTypingFocus]);
+    if (mode === 'dictation') {
+      setDictation(null);
+      setDictationsState('loading');
+    } else {
+      restoreTypingFocus();
+    }
+  }, [mode, resetClock, restoreTypingFocus]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
@@ -541,18 +609,24 @@ export default function TypingClient({
     ? 'text-[clamp(1.4rem,1.05rem+1.15vw,2.5rem)] leading-[1.9]'
     : 'text-[clamp(1.3rem,1rem+1.05vw,2.35rem)] leading-[1.9]';
   const timeDisplay = formatClock(
-    timed ? Math.max(0, duration - elapsedSec) : elapsedSec
+    timed ? Math.max(0, activeDuration - elapsedSec) : elapsedSec
   );
+
+  const settingsSummary = [
+    category === 'mixed' ? 'Mixed' : category,
+    passageLength === 'short' ? 'First 30 words' : 'Full passage',
+    timed ? `${duration}s` : 'Untimed',
+  ].join(' · ');
 
   const wordsTyped = (text: string) => countScoredWords(text);
 
 
   return (
-    <div className="space-y-3 sm:space-y-4">
+    <div className="space-y-2 sm:space-y-4">
       <section className="practice-console" aria-label="Typing test settings">
-        <div className={mode === 'free' ? "practice-settings" : "flex flex-wrap items-end justify-between gap-2"}>
+        <div className={mode === 'free' ? cn("practice-settings", settingsExpanded && "practice-settings-expanded") : "flex flex-wrap items-end justify-between gap-2"}>
           <div className={cn("practice-mode", mode !== 'free' && "min-w-0 flex-1 basis-52")}>
-            <p className="control-caption">Practice mode</p>
+            <p className="control-caption max-sm:sr-only">Practice mode</p>
             <div className="practice-track" role="group" aria-label="Typing mode" style={{ '--slots': 3, '--selected': ['free', 'dictation', 'custom'].indexOf(mode) } as React.CSSProperties}>
               <ModeTab compact active={mode === 'free'} icon={Sparkles} label="Free" onClick={() => {
                 if (pendingPassage.current || (mode !== 'free' && !confirmDiscard())) return;
@@ -575,6 +649,18 @@ export default function TypingClient({
             </div>
           </div>
           {mode === 'free' && <>
+            <button
+              type="button"
+              className="practice-summary"
+              aria-label={`Practice settings, ${settingsSummary}`}
+              aria-expanded={settingsExpanded}
+              aria-controls="free-practice-options"
+              onClick={() => setSettingsExpanded(value => !value)}
+            >
+              <span>{settingsSummary}</span>
+              <ChevronDown className={cn('size-4 shrink-0', settingsExpanded && 'rotate-180')} aria-hidden />
+            </button>
+            <div id="free-practice-options" className="practice-options">
             <div className="practice-topic">
               <p className="control-caption">Topic</p>
               <ChoiceMenu label="Passage topic" value={category} options={CATEGORIES} onChange={(next) => void changePassage(next, duration, passage?.id)} disabled={state !== 'idle' || passageLoading} />
@@ -585,17 +671,20 @@ export default function TypingClient({
                 options={[{value: 'full', label: 'Full passage'}, {value: 'short', label: 'First 30 words'}]} />
             </div>
             <div className="practice-time">
-              <p className="control-caption">Time limit</p>
-              <div className="practice-track" role="group" aria-label="Test duration" style={{ '--slots': DURATIONS.length, '--selected': DURATIONS.indexOf(passageLength === 'short' ? 0 : duration) } as React.CSSProperties}>
-                {DURATIONS.map(item => <button key={item} type="button" aria-pressed={(passageLength === 'short' ? 0 : duration) === item} disabled={state !== 'idle' || passageLoading || passageLength === 'short'} onClick={() => chooseDuration(item)}>
-                  {item ? item + 's' : 'Off'}
-                </button>)}
-              </div>
+              <DurationControls
+                value={passageLength === 'short' ? 0 : duration}
+                disabled={state !== 'idle' || passageLoading || passageLength === 'short'}
+                onChange={chooseDuration}
+              />
+            </div>
             </div>
           </>}
-          {mode === 'custom' && customText && (
-            <Button variant="outline" className="ml-auto min-h-11" onClick={openCustomEditor}>Edit passage</Button>
-          )}
+          {mode === 'custom' && customText && <>
+            <div className="min-w-0 flex-1 basis-44">
+              <DurationControls value={customDuration} disabled={state !== 'idle'} onChange={setCustomDuration} />
+            </div>
+            <Button variant="outline" className="min-h-11" onClick={openCustomEditor}>Edit passage</Button>
+          </>}
         </div>
         {mode === 'free' && passageLoading && <p role="status" className="mt-2 text-sm text-muted-foreground">Loading passage…</p>}
         {mode === 'free' && state !== 'running' && failedSelection && (
@@ -696,7 +785,7 @@ export default function TypingClient({
             </>
           ) : (
             <>
-              <LiveMetric label="Net WPM" value={state === 'idle' || !alignment ? '—' : score.netWpm} />
+              <LiveMetric label="Net WPM" value={state === 'idle' || !alignment || !score.scored ? '—' : score.netWpm} />
               <LiveMetric label="Accuracy" value={state === 'idle' || !alignment ? '—' : `${score.accuracy}%`} />
               <LiveMetric label={timed ? 'Time' : 'Elapsed'} value={timeDisplay} timer />
               <LiveMetric label="Words" value={`${wordsTyped(typed)}/${scoredReferenceWords}`} />
@@ -705,13 +794,7 @@ export default function TypingClient({
         </div>
       )}
 
-      {!isFinished && <section aria-label="Typing practice" className="pt-2">
-      {mode === 'free' && !isBlind && state === 'idle' && (
-        <details className="reference-preview" key={reference}>
-          <summary>Preview passage <span>{referenceWords} words</span></summary>
-          <p>{reference}</p>
-        </details>
-      )}
+      {!isFinished && <section aria-label="Typing practice" className="relative sm:pt-2">
       {!canType ? (
         <div className="rounded-2xl border border-dashed border-border bg-surface/40 px-6 py-14 text-center sm:py-20">
           <p className="text-sm text-muted-foreground">
@@ -734,10 +817,10 @@ export default function TypingClient({
       ) : (
         <div
           className={cn(
-            'typing-surface glow-brand relative scroll-mt-20 flex cursor-text flex-col border px-4 py-5 shadow-sm transition-colors sm:px-8 sm:py-6',
+            'typing-surface glow-brand relative scroll-mt-20 flex cursor-text flex-col border px-3 py-3 sm:py-5 shadow-sm transition-colors sm:px-8 sm:py-6',
             isPublic
-              ? 'min-h-[260px] rounded-3xl sm:min-h-[315px]'
-              : 'min-h-[235px] rounded-3xl sm:min-h-[305px]',
+              ? 'rounded-3xl sm:min-h-[315px]'
+              : 'rounded-3xl sm:min-h-[305px]',
             'border-border-strong/65 focus-within:border-ring/65 focus-within:ring-2 focus-within:ring-ring/25'
           )}
         >
@@ -751,10 +834,10 @@ export default function TypingClient({
             <div
               ref={viewportRef}
               className={cn(
-                'relative mx-auto w-full overflow-hidden',
+                'typing-line-window relative mx-auto w-full overflow-hidden',
                 passageType
               )}
-              style={{ height: `${TYPING_VIEWPORT_HEIGHT_EM}em` }}
+              style={{ '--desktop-typing-height': `${TYPING_VIEWPORT_HEIGHT_EM}em` } as React.CSSProperties}
             >
               <div className={cn(passageBase, 'relative')}>
                 {liveChars.chars.map((char, index) => (
@@ -794,8 +877,19 @@ export default function TypingClient({
           <input
             ref={inputRef}
             type="text"
-            value={typed}
+            value={compositionDraft ?? typed}
             onChange={handleInput}
+            onCompositionStart={(event) => {
+              composing.current = true;
+              setCompositionDraft(event.currentTarget.value);
+            }}
+            onCompositionEnd={(event) => {
+              const value = event.currentTarget.value;
+              composing.current = false;
+              compositionCommit.current = value;
+              setCompositionDraft(null);
+              if (value !== typed) commitTyped(value);
+            }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             disabled={isFinished || (mode === 'free' && passageLoading)}
@@ -816,6 +910,12 @@ export default function TypingClient({
             enterKeyHint="done"
           />
         </div>
+      )}
+      {mode === 'free' && !isBlind && state === 'idle' && (
+        <details className="reference-preview" key={reference}>
+          <summary>Preview passage <span>{referenceWords} words</span></summary>
+          <p>{reference}</p>
+        </details>
       )}
       </section>}
 
@@ -873,8 +973,7 @@ export default function TypingClient({
             elapsedSec={elapsedSec}
             mode={mode}
             counted={isCounted}
-            public={isPublic}
-            showReview={showModes || mode !== 'free'}
+            timed={timed}
             onRetry={restart}
             onNewFree={mode === 'free' ? newFreePassage : undefined}
           />
@@ -907,8 +1006,14 @@ export default function TypingClient({
               <p className="mt-1 text-sm text-muted-foreground">
                 {dictationScore.error ?? (alignmentError === 'budget' ? 'This text exceeds the scoring budget.' : 'Could not calculate the passage review.')}
               </p>
+              {mode === 'dictation' && !isCounted && typed && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm font-medium">Copy your transcription</summary>
+                  <textarea readOnly value={typed} aria-label="Your unsaved transcription" className="field mt-2 min-h-28 font-mono" />
+                </details>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
-                {!isCounted && <Button
+                {!isCounted && !dictationScore.revisionUnavailable && <Button
                   size="sm"
                   className="gap-1.5"
                   onClick={mode === 'dictation' ? dictationScore.retry : restart}
@@ -922,7 +1027,7 @@ export default function TypingClient({
                   className="gap-1.5"
                   onClick={() => { if (confirmDiscard()) restart(); }}
                 >
-                  Start over
+                  {dictationScore.revisionUnavailable ? 'Load current dictation' : 'Start over'}
                 </Button>
               </div>
             </>
