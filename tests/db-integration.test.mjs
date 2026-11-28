@@ -45,8 +45,8 @@ test('database atomically replaces sessions, rolls back failed inserts and enfor
       await pool.query(`UPDATE "AbuseBucket" SET "resetAt" = now() - interval '1 day' WHERE "key" = $1`, [key]);
       await pool.query(`UPDATE "session" SET "expiresAt" = now() - interval '1 day' WHERE "userId" = $1`, [user]);
       const { pruneOperationalRows } = await import('../lib/db-maintenance.ts');
-      const pruned = await pruneOperationalRows(0);
-      assert.equal(pruned.logs, 0);
+      const pruned = await pruneOperationalRows(0, { force: true });
+      assert.equal(pruned?.logs, 0);
       assert.equal((await pool.query('SELECT 1 FROM "AbuseBucket" WHERE "key" = $1', [key])).rowCount, 0);
       assert.deepEqual(await sessions(), []);
     } finally {
@@ -77,5 +77,58 @@ test('legacy fixture is archived and valid history survives', {
     assert.deepEqual(history.rows, [{ id: 'legacy-fixture-valid-attempt', wpm: 3, accuracy: 100 }]);
   } finally {
     await pool.end();
+  }
+});
+
+
+test('maintenance coordinates workers and expires only eligible operational data', {
+  skip: enabled ? false : 'requires a migrated isolated database and STENO_DISPOSABLE_DB=YES',
+}, async () => {
+  const pool = new pg.Pool({ connectionString: url });
+  const nonce = randomUUID();
+  const student = nonce + '-student';
+  const admin = nonce + '-admin';
+  const login = (suffix) => nonce + '-' + suffix;
+  const temp = login('temp');
+  const receipt = 'stenotype:dictation:create:' + nonce;
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = url;
+  try {
+    await pool.query(`INSERT INTO "user" (id,name,email,role,"updatedAt") VALUES
+      ($1,'Test student',$1||'@example.test','student',now()),
+      ($2,'Test admin',$2||'@example.test','admin',now())`, [student, admin]);
+    await pool.query(`INSERT INTO "LoginAttempt" (id,email,"userId",success,"createdAt") VALUES
+      ($1,'test@example.test',$6,false,now()-interval '31 days'),
+      ($2,'test@example.test',$6,true,now()-interval '29 days'),
+      ($3,'test@example.test',$7,true,now()-interval '91 days'),
+      ($4,'test@example.test',$7,false,now()-interval '31 days'),
+      ($5,'test@example.test',null,false,now()-interval '2 days')`,
+      [login('student-old'),login('student-new'),login('admin-old'),login('admin-new'),login('detached-new'),student,admin]);
+    await pool.query(`INSERT INTO verification (id,identifier,value,"expiresAt","updatedAt") VALUES
+      ($1,$1,'',now()-interval '1 minute',now()), ($2,$2,'','9999-01-01',now())`, [temp,receipt]);
+
+    const { pruneOperationalRows } = await import('../lib/db-maintenance.ts');
+    const locker = await pool.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query('SELECT pg_advisory_xact_lock(19237141,1)');
+      assert.equal(await pruneOperationalRows(undefined, { force: true }), null);
+    } finally {
+      await locker.query('ROLLBACK');
+      locker.release();
+    }
+    assert.ok(await pruneOperationalRows(undefined, { force: true }));
+    assert.equal(await pruneOperationalRows(), null, 'separate workers share the durable schedule');
+    const remaining = await pool.query('SELECT id FROM "LoginAttempt" WHERE id LIKE $1 ORDER BY id', [nonce+'-%']);
+    assert.deepEqual(remaining.rows.map(({id})=>id), ['admin-new','detached-new','student-new'].map(login));
+    const verification = await pool.query('SELECT id FROM verification WHERE id IN ($1,$2)', [temp,receipt]);
+    assert.deepEqual(verification.rows, [{id:receipt}]);
+  } finally {
+    await pool.query('DELETE FROM "LoginAttempt" WHERE id LIKE $1', [nonce+'-%']);
+    await pool.query('DELETE FROM verification WHERE id IN ($1,$2)', [temp,receipt]);
+    await pool.query('DELETE FROM "user" WHERE id IN ($1,$2)', [student,admin]);
+    await pool.end();
+    if (previous === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous;
   }
 });

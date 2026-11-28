@@ -192,6 +192,7 @@ model TypingAttempt {
   dictation   Dictation @relation(fields: [dictationId], references: [id], onDelete: Restrict)
 
   submissionKey     String?
+  practiceExpiresAt DateTime? @db.Timestamptz(3)
   referenceSnapshot String? // Compatibility for older writers
   referenceDigest   String?
   reference         DictationReference? @relation(fields: [referenceDigest], references: [digest], onDelete: Restrict, onUpdate: Restrict)
@@ -228,6 +229,7 @@ model TypingAttempt {
   createdAt DateTime @db.Timestamptz(3) @default(now())
 
   @@unique([studentId, submissionKey])
+  @@unique([studentId, dictationId])
   @@index([studentId, createdAt])
   @@index([dictationId])
 }

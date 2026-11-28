@@ -45,7 +45,7 @@ export default async function StudentDictationsPage({ searchParams }: {
         return <li key={item.id} className="grid items-center gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_auto]">
           <div className="min-w-0"><h2 className="break-words font-semibold">{item.title}</h2><p className="text-sm text-muted-foreground">{dictationMetadata(item)}</p></div>
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-            <Button asChild variant="outline" className="h-11 gap-2 px-2 sm:px-4"><Link prefetch={false} href={`/student/results?dictationId=${encodeURIComponent(item.id)}`}><BarChart3 size={16} aria-hidden /> Results</Link></Button>
+            <Button asChild variant="outline" className="h-11 gap-2 px-2 sm:px-4"><Link prefetch={false} href={`/student/results?dictationId=${encodeURIComponent(item.id)}`}><BarChart3 size={16} aria-hidden /> Result</Link></Button>
             {video ? <Button asChild variant="outline" className="h-11 gap-2 px-2 sm:px-4"><a href={video} target="_blank" rel="noopener noreferrer" aria-label="YouTube (opens in a new tab)"><Youtube size={16} aria-hidden /> YouTube</a></Button>
               : <Button variant="outline" disabled className="h-11 gap-2 px-2 sm:px-4"><Youtube size={16} aria-hidden /> No video</Button>}
             <DictationStudy item={item} practiceHref={practiceHref} />

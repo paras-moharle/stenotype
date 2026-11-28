@@ -18,8 +18,8 @@ test('student and admin areas have error boundaries', () => {
 
 test('admin tables show an empty state instead of a blank table', () => {
   for (const path of [
-    'app/admin/students/page.tsx',
-    'app/admin/dictations/page.tsx',
+    'app/admin/students/students-client.tsx',
+    'app/admin/dictations/dictations-client.tsx',
   ]) {
     const source = fs.readFileSync(path, 'utf8');
     assert.match(source, /AdminEmptyState/, path);

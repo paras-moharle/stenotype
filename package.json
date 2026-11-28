@@ -18,7 +18,8 @@
     "test:ui": "tsx --test tests/typing-ui-browser.test.mjs",
     "db:seed": "tsx prisma/seed.ts",
     "db:check-sync": "prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code",
-    "db:verify": "node scripts/db/verify.mjs"
+    "db:verify": "node scripts/db/verify.mjs",
+    "db:maintain": "node --import tsx scripts/db/maintain.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",

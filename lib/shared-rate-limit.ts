@@ -1,4 +1,3 @@
-import { maintainDuringTraffic } from '@/lib/db-maintenance';
 import { db } from '@/lib/db';
 
 export async function takeSharedQuota(key: string, limit: number, windowMs: number) {
@@ -14,6 +13,5 @@ export async function takeSharedQuota(key: string, limit: number, windowMs: numb
     RETURNING "count"
   `;
 
-  if (Math.random() < 0.01) await maintainDuringTraffic();
   return rows.length > 0;
 }

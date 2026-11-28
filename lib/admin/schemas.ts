@@ -119,8 +119,13 @@ export const updateStudentSchema = z
     name: z.string().trim().min(1).max(100).optional(),
     phone: phoneSchema,
     status: studentStatusSchema.optional(),
+    email: z.string().trim().toLowerCase().email('Enter a valid email address').max(254).optional(),
+    expected: z.object({
+      name: z.string().max(100).optional(), email: z.string().max(254).optional(),
+      phone: z.string().max(20).nullable().optional(), status: studentStatusSchema.optional(),
+    }).optional(),
   })
-  .refine((value) => Object.values(value).some((v) => v !== undefined), {
+  .refine((value) => Object.entries(value).some(([key, v]) => key !== 'expected' && v !== undefined), {
     message: 'No fields to update',
   });
 

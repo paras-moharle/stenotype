@@ -21,7 +21,7 @@ export default async function AdminDashboardPage() {
     capacity,
   ] = await Promise.all([
     db.studentProfile.count(),
-    db.studentProfile.count({ where: { status: 'ACTIVE' } }),
+    db.studentProfile.count({ where: { status: 'ACTIVE', user: { banned: false } } }),
     db.dictation.count({ where: { status: 'PUBLISHED' } }),
     db.typingAttempt.count({ where: { ...dictationAttemptsWhere } }),
     db.typingAttempt.findMany({
@@ -50,7 +50,7 @@ export default async function AdminDashboardPage() {
     <div className="space-y-6">
       <AdminHeader
         title="Overview"
-        description="Students, dictations and the latest scored attempts."
+        description="Students, dictations and the saved dictation results."
       />
 
       {(!capacity || capacity.level !== 'normal') && (
@@ -85,7 +85,7 @@ export default async function AdminDashboardPage() {
 
         {recentAttempts.length === 0 ? (
           <p className="text-muted-foreground">
-            No typing attempts yet. Students will appear here once they
+            No results saved yet. Students will appear here once they
             complete their first dictation.
           </p>
         ) : (

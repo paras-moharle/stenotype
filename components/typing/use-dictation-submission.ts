@@ -35,7 +35,7 @@ export function useDictationSubmission(submission: Submission | null) {
           setSettled({
             submission: attempt, retry,
             error: response.status === 401 ? 'Your session expired. Sign in in another tab, then retry here.' : payload?.error ?? 'Could not score this attempt.',
-            revisionUnavailable: payload?.code === 'PRACTICE_UNAVAILABLE',
+            revisionUnavailable: payload?.code === 'PRACTICE_UNAVAILABLE' || payload?.code === 'PRACTICE_SUPERSEDED',
           });
           return;
         }

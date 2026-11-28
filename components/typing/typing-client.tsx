@@ -92,6 +92,11 @@ function DurationControls({ value, disabled, onChange }: {
   </>;
 }
 
+// The settings HTML is visible before React attaches its event handlers.
+function markTypingReady(settings: HTMLElement | null) {
+  if (settings) settings.dataset.typingReady = 'true';
+}
+
 export type TypingClientProps = {
   variant?: 'public' | 'student';
   initialMode?: Mode;
@@ -623,7 +628,7 @@ export default function TypingClient({
 
   return (
     <div className="space-y-2 sm:space-y-4">
-      <section className="practice-console" aria-label="Typing test settings">
+      <section ref={markTypingReady} className="practice-console" aria-label="Typing test settings">
         <div className={mode === 'free' ? cn("practice-settings", settingsExpanded && "practice-settings-expanded") : "flex flex-wrap items-end justify-between gap-2"}>
           <div className={cn("practice-mode", mode !== 'free' && "min-w-0 flex-1 basis-52")}>
             <p className="control-caption max-sm:sr-only">Practice mode</p>

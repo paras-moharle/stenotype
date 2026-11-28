@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { rejectStorageGrowth } from '@/lib/db-capacity';
 import { readJson } from '@/lib/mutation-request';
 import { NextResponse } from 'next/server';
@@ -27,7 +28,7 @@ export async function GET(
   const { id } = await params;
   const dictation = await db.dictation.findUnique({
     where: { id },
-    select: { id: true, title: true, category: true, referenceTranscript: true, youtubeId: true, status: true, updatedAt: true },
+    select: { id: true, title: true, category: true, referenceTranscript: true, youtubeId: true, status: true, updatedAt: true, _count: { select: { typingAttempts: true } } },
   });
   return dictation
     ? NextResponse.json({ dictation })
@@ -82,7 +83,10 @@ export async function PUT(
 
   // The compare-and-swap must advance even if two edits land in one millisecond.
   const updatedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1));
-  const previousPublication = existing.status === 'ARCHIVED' && status === 'PUBLISHED' ? null : existing.publishedAt;
+  const nextStatus = status ?? existing.status;
+  const recordingChanged = youtubeId !== undefined && youtubeId !== existing.youtubeId;
+  const newPublication = nextStatus === 'PUBLISHED' && (existing.status !== 'PUBLISHED' || recordingChanged);
+  const previousPublication = newPublication ? null : existing.publishedAt;
   try {
     const dictation = await db.$transaction(async (tx) => {
       const updated = await tx.dictation.update({
@@ -95,10 +99,10 @@ export async function PUT(
           ...(youtubeId !== undefined ? { youtubeId } : {}),
           ...(nextDuration !== undefined ? { durationSeconds: nextDuration } : {}),
           ...(status !== undefined ? { status } : {}),
-          // Editing a published dictation keeps its original publish date;
-          // publishing a draft stamps one; moving to draft clears it.
-          ...(status !== undefined
-            ? { publishedAt: nextPublishedAt(previousPublication, status, updatedAt) }
+          // A different recording opens a new publication even if the
+          // original recording is later restored.
+          ...(status !== undefined || newPublication
+            ? { publishedAt: nextPublishedAt(previousPublication, nextStatus, updatedAt) }
             : {}),
         },
       });
@@ -167,4 +171,30 @@ export async function DELETE(
   }
 
   return NextResponse.json({ success: true });
+}
+
+const purgeSchema = z.object({ confirmTitle: z.string().min(1).max(200), expectedResults: z.number().int().nonnegative() });
+
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const gate = await requireAdmin(request);
+  if (!gate.ok) return gate.response;
+  const body = await readJson(request, 16_384);
+  if (!body.ok) return body.response;
+  const parsed = purgeSchema.safeParse(body.data);
+  if (!parsed.success) return NextResponse.json({ error: 'Invalid deletion confirmation.' }, { status: 400 });
+  const { id } = await params;
+  const result = await db.$transaction(async tx => {
+    const [dictation] = await tx.$queryRaw<{ title: string }[]>`
+      SELECT "title" FROM "Dictation" WHERE "id" = ${id} FOR UPDATE
+    `;
+    if (!dictation) return null;
+    const count = await tx.typingAttempt.count({ where: { dictationId: id } });
+    if (dictation.title !== parsed.data.confirmTitle || count !== parsed.data.expectedResults) return 'stale';
+    await tx.typingAttempt.deleteMany({ where: { dictationId: id } });
+    await tx.dictation.delete({ where: { id } });
+    return count;
+  });
+  if (result === null) return NextResponse.json(NOT_FOUND, { status: 404 });
+  if (result === 'stale') return NextResponse.json({ error: 'The dictation or result count changed. Reload before confirming again.' }, { status: 409 });
+  return NextResponse.json({ success: true, deletedResults: result });
 }

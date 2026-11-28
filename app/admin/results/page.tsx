@@ -1,9 +1,12 @@
-import { Button } from '@/components/ui/button';
+import type { Prisma } from '@/generated/prisma/client';
+import Link from 'next/link';
+import { AdminResultsFilter } from '@/components/admin/admin-results-filter';
 import { requireAdminPage } from '@/lib/admin/require-admin';
 import { ResultsPagination } from '@/components/ui/results-pagination';
 import { parsePageNumber } from '@/lib/pagination';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminTable } from '@/components/admin/admin-table';
+import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { dictationAttemptsWhere } from '@/lib/dictation-history';
 import { formatISTDateTime } from '@/lib/datetime';
@@ -36,27 +39,30 @@ type Attempt = {
   };
 };
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 25;
 
 export default async function AdminResultsPage({
   searchParams,
-}: { searchParams: Promise<{ page?: string | string[]; q?: string | string[]; completed?: string | string[] }> }) {
+}: { searchParams: Promise<{ page?: string | string[]; q?: string | string[]; completed?: string | string[]; student?: string | string[] }> }) {
   await requireAdminPage();
-  const { page: pageParam, q, completed } = await searchParams;
+  const { page: pageParam, q, completed, student } = await searchParams;
   const page = parsePageNumber(pageParam);
   const query = typeof q === 'string' ? q.trim().slice(0, 120) : '';
+  const studentId = typeof student === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(student) ? student : undefined;
   const completion = completed === 'yes' || completed === 'no' ? completed : '';
 
-  const rows = await db.typingAttempt.findMany({
-    where: {
+  const attemptWhere: Prisma.TypingAttemptWhereInput = {
       ...dictationAttemptsWhere,
+      ...(studentId ? { studentId } : {}),
       ...(completion && { completed: completion === 'yes' }),
       ...(query && { OR: [
         { dictation: { title: { contains: query, mode: 'insensitive' } } },
         { student: { user: { name: { contains: query, mode: 'insensitive' } } } },
         { student: { user: { email: { contains: query, mode: 'insensitive' } } } },
       ] }),
-    },
+  };
+  const rows = await db.typingAttempt.findMany({
+    where: attemptWhere,
     take: PAGE_SIZE + 1,
     skip: (page - 1) * PAGE_SIZE,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -87,6 +93,14 @@ export default async function AdminResultsPage({
     },
   });
 
+  if (!rows.length && page > 1) {
+    const count = await db.typingAttempt.count({ where: attemptWhere });
+    const params = new URLSearchParams({ page: String(Math.max(1, Math.ceil(count / PAGE_SIZE))) });
+    if (studentId) params.set('student', studentId);
+    if (query) params.set('q', query);
+    if (completion) params.set('completed', completion);
+    redirect('/admin/results?' + params);
+  }
   const attempts = rows.slice(0, PAGE_SIZE);
   const columns = [
     {
@@ -106,7 +120,7 @@ export default async function AdminResultsPage({
       header: 'Dictation',
       render: (a: Attempt) => (
         <div>
-          <div className="font-medium">{a.dictation?.title ?? '—'}</div>
+          <Link prefetch={false} href={`/admin/results/${a.id}`} className="font-medium underline-offset-4 hover:underline">{a.dictation?.title ?? 'Dictation result'}</Link>
           <div className="text-xs text-muted-foreground">
             {a.dictation?.category ?? ''}
           </div>
@@ -167,20 +181,10 @@ export default async function AdminResultsPage({
     <div className="space-y-6">
       <AdminHeader
         title="Results"
-        description="Student typing attempt results"
+        description="Current saved dictation results"
       />
 
-      <form method="get" action="/admin/results" className="grid items-end gap-3 sm:grid-cols-[1fr_12rem_auto]">
-        <label><span className="field-label">Search student or dictation</span>
-          <input name="q" type="search" defaultValue={query} maxLength={120} className="field" />
-        </label>
-        <label><span className="field-label">Passage coverage</span>
-          <select name="completed" defaultValue={completion} className="field">
-            <option value="">All results</option><option value="yes">Fully covered</option><option value="no">Partially covered</option>
-          </select>
-        </label>
-        <Button type="submit">Apply filters</Button>
-      </form>
+      <AdminResultsFilter query={query} completion={completion} studentId={studentId} />
 
       {attempts.length === 0 ? (
         <div className="rounded-2xl border border-border/70 p-8 text-center text-muted-foreground">
@@ -193,7 +197,7 @@ export default async function AdminResultsPage({
           rowKey={(a) => a.id}
         />
       )}
-      <ResultsPagination path="/admin/results" page={page} filters={{ q: query, completed: completion }} hasMore={rows.length > PAGE_SIZE} />
+      <ResultsPagination path="/admin/results" page={page} filters={{ q: query, completed: completion, student: studentId ?? '' }} hasMore={rows.length > PAGE_SIZE} />
     </div>
   );
 }

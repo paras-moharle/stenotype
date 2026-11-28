@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { rejectStorageGrowth } from '@/lib/db-capacity';
 import { readJson } from '@/lib/mutation-request';
 import { NextResponse } from 'next/server';
@@ -5,7 +6,7 @@ import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/admin/require-admin';
 import { createDictationSchema } from '@/lib/admin/schemas';
 import { nextPublishedAt } from '@/lib/admin/publish';
-import { pageSlice, parsePageParams } from '@/lib/pagination';
+import { listAdminDictations } from '@/lib/admin/list-dictations';
 
 /**
  * GET /api/admin/dictations?limit=100&offset=0
@@ -17,29 +18,7 @@ import { pageSlice, parsePageParams } from '@/lib/pagination';
 export async function GET(request: Request) {
   const gate = await requireAdmin();
   if (!gate.ok) return gate.response;
-
-  const page = parsePageParams(request);
-  const query = new URL(request.url).searchParams.get('q')?.trim().slice(0, 200);
-  const categories = (['GENERAL', 'PROFESSIONAL', 'LEGAL'] as const)
-    .filter((category) => query && category.toLowerCase().includes(query.toLowerCase()));
-
-  const rows = await db.dictation.findMany({
-    where: query ? { OR: [
-      { title: { contains: query, mode: 'insensitive' } },
-      { category: { in: categories } },
-    ] } : undefined,
-    select: { id: true, title: true, category: true, status: true, youtubeId: true, createdAt: true },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: page.take + 1,
-    skip: page.skip,
-  });
-
-  const dictations = pageSlice(rows, page);
-
-  return NextResponse.json({
-    dictations,
-    page: { limit: page.limit, offset: page.offset, hasMore: page.hasMore(rows) },
-  });
+  return NextResponse.json(await listAdminDictations(new URL(request.url).searchParams));
 }
 
 export async function POST(request: Request) {
@@ -61,22 +40,46 @@ export async function POST(request: Request) {
     parsed.data;
   const status = parsed.data.status ?? 'DRAFT';
 
+  const idempotencyKey = request.headers.get('Idempotency-Key');
+  if (!idempotencyKey || !/^(?:[0-9a-f]{36}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.test(idempotencyKey)) {
+    return NextResponse.json({ error: 'Reload the admin workspace to obtain a valid creation key.' }, { status: 400 });
+  }
+
+  const data = {
+    title, category, referenceTranscript, youtubeId: youtubeId ?? null,
+    durationSeconds: youtubeId ? durationSeconds ?? null : null,
+    status, createdById: gate.userId,
+  };
+  const digest = createHash('sha256').update(JSON.stringify(data)).digest('hex');
+  const receiptId = 'stenotype:dictation:create:' + createHash('sha256')
+    .update(JSON.stringify([gate.userId, idempotencyKey.toLowerCase()])).digest('hex');
+  const reply = (value: string) => value.startsWith(digest + ':')
+    ? NextResponse.json({ dictation: { id: value.slice(digest.length + 1) } }, { status: 201 })
+    : NextResponse.json({ error: 'This creation key already belongs to a different dictation.' }, { status: 409 });
+
+  const receipt = await db.verification.findUnique({ where: { id: receiptId }, select: { value: true } });
+  if (receipt) return reply(receipt.value);
   const capacity = await rejectStorageGrowth();
   if (capacity) return capacity;
 
-  const dictation = await db.dictation.create({
-    data: {
-      title,
-      category,
-      referenceTranscript,
-      // A blank YouTube field is valid and means "no video".
-      youtubeId: youtubeId ?? null,
-      durationSeconds: youtubeId ? durationSeconds ?? null : null,
-      status,
-      createdById: gate.userId,
-      publishedAt: nextPublishedAt(null, status),
-    },
+  const value = await db.$transaction(async tx => {
+    const dictationId = randomUUID();
+    const receiptValue = digest + ':' + dictationId;
+    // App-owned permanent receipt, isolated from Better Auth identifiers.
+    const inserted = await tx.verification.createMany({
+      data: {
+        id: receiptId, identifier: receiptId, value: receiptValue,
+        expiresAt: new Date('9999-01-01T00:00:00.000Z'),
+      },
+      skipDuplicates: true,
+    });
+    if (!inserted.count) {
+      return (await tx.verification.findUniqueOrThrow({ where: { id: receiptId }, select: { value: true } })).value;
+    }
+    await tx.dictation.create({
+      data: { ...data, id: dictationId, publishedAt: nextPublishedAt(null, status) },
+    });
+    return receiptValue;
   });
-
-  return NextResponse.json({ dictation }, { status: 201 });
+  return reply(value);
 }

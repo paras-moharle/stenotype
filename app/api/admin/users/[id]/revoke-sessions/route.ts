@@ -26,8 +26,10 @@ export async function POST(
     return NextResponse.json({ error: 'User not found' }, { status: 404 });
   }
 
-  const result = await db.session.deleteMany({
-    where: { userId: id },
+  const result = await db.$transaction(async tx => {
+    // Serialize revocation with student result saves and credential changes.
+    await tx.$queryRaw`SELECT "id" FROM "user" WHERE "id" = ${id} FOR UPDATE`;
+    return tx.session.deleteMany({ where: { userId: id } });
   });
 
   return NextResponse.json({

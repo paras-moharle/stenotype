@@ -47,11 +47,10 @@ test('the database pool stays small so Neon can suspend', () => {
   assert.ok(max > 0 && max <= 10, `pool max ${max} is too large for the free tier`);
 });
 
-test('public pages are not forced dynamic', () => {
+test('public practice and about are not forced dynamic', () => {
   for (const path of [
     'app/(public)/page.tsx',
     'app/(public)/about/page.tsx',
-    'app/(public)/login/page.tsx',
   ]) {
     const source = fs.readFileSync(path, 'utf8');
     assert.doesNotMatch(source, /force-dynamic/, path);

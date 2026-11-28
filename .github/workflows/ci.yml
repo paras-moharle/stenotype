@@ -106,6 +106,7 @@ jobs:
           SMOKE_EMAIL: student@example.test
           SMOKE_PASSWORD: local-ci-student-password
           STENO_E2E_URL: http://localhost:3000
+          STENO_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/stenotype-browser-failures
           STENO_INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/stenotype
           STENO_DISPOSABLE_DB: "YES"
           STENO_EXPECT_LEGACY_FIXTURE: "YES"
@@ -151,6 +152,15 @@ jobs:
 
           start_server 3001 DB_PROJECT_USAGE_PERCENT=80
           STENO_CAPACITY_TEST_URL=http://localhost:3001 run_required tests/db-capacity-http.test.mjs
+
+      - name: Upload Chromium failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chromium-failure-diagnostics
+          path: ${{ runner.temp }}/stenotype-browser-failures
+          if-no-files-found: ignore
+          retention-days: 7
 
   security:
     name: Dependency and secret checks

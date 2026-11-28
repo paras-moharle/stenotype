@@ -1,4 +1,3 @@
-import { db } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
 
 // A concrete related-row predicate also works against the legacy nullable
@@ -26,18 +25,3 @@ export const dictationHistorySelect = {
   createdAt: true,
   dictation: { select: { id: true, title: true, category: true } },
 } satisfies Prisma.TypingAttemptSelect;
-
-export async function dictationAttemptStats(studentId: string) {
-  const overall = await db.typingAttempt.aggregate({
-    where: { ...dictationAttemptsWhere, studentId },
-    _count: { _all: true },
-    _avg: { wpm: true, accuracy: true },
-    _max: { wpm: true },
-  });
-  return {
-    totalAttempts: overall._count._all,
-    avgWpm: Math.round(overall._avg.wpm ?? 0),
-    avgAccuracy: Math.round(overall._avg.accuracy ?? 0),
-    bestWpm: overall._max.wpm ?? 0,
-  };
-}

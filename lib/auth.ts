@@ -1,14 +1,16 @@
+import { APIError } from 'better-auth/api';
+import { lockStudentAccount } from './student-account-lock';
+import { signInSnapshot } from './admitted-sign-in';
 import { developmentOrigins, exactOrigin } from './auth-origins';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { admin } from 'better-auth/plugins';
 import { db } from './db';
 import { getStorageCapacity } from './db-capacity';
-import { maintainDuringTraffic } from './db-maintenance';
 import { rateLimitConfig, signUpPolicy } from './auth-config';
 
-// The database trigger atomically replaces the prior session. The auth
-// hook is exclusively for best-effort audit logging.
+// The trigger replaces the prior session atomically. Admission below
+// checks that the account still matches the credentials just verified.
 export const auth = betterAuth({
   baseURL: exactOrigin(process.env.BETTER_AUTH_URL),
   trustedOrigins: developmentOrigins(),
@@ -61,15 +63,42 @@ export const auth = betterAuth({
   databaseHooks: {
     session: {
       create: {
+        async before(session) {
+          const snapshot = signInSnapshot.getStore();
+          if (snapshot === undefined) return;
+          if (!snapshot || snapshot.id !== session.userId) throw new APIError('UNAUTHORIZED', { message: 'Invalid email or password.' });
+          if (snapshot.role !== 'student') return;
+          const profile = await db.studentProfile.findUnique({
+            where: { userId: session.userId }, select: { status: true },
+          });
+          if (profile?.status !== 'ACTIVE') {
+            throw new APIError('FORBIDDEN', { code: 'STUDENT_INELIGIBLE', message: 'Student access is unavailable.' });
+          }
+        },
         async after(session) {
+          const snapshot = signInSnapshot.getStore();
+          if (snapshot?.role === 'student' && snapshot.id === session.userId) {
+            const admitted = await db.$transaction(async tx => {
+              const user = await lockStudentAccount(tx, session.userId);
+              const profile = await tx.studentProfile.findUnique({
+                where: { userId: session.userId }, select: { status: true },
+              });
+              if (user && !user.banned && user.updatedAt.getTime() === snapshot.updatedAt && profile?.status === 'ACTIVE') {
+                return true;
+              }
+              await tx.session.deleteMany({ where: { id: session.id, userId: session.userId } });
+              return false;
+            });
+            if (!admitted) throw new APIError('FORBIDDEN', { code: 'STUDENT_INELIGIBLE', message: 'Student access is unavailable.' });
+          }
+
           try {
-            await maintainDuringTraffic();
             if ((await getStorageCapacity()).level === 'restricted') return;
             await db.$executeRaw`
               INSERT INTO "LoginAttempt" ("id", "email", "userId", "success", "ipAddress", "userAgent")
               SELECT gen_random_uuid()::text, "email", "id", true,
                      ${session.ipAddress?.slice(0, 64) ?? null}, ${session.userAgent?.slice(0, 512) ?? null}
-              FROM "user" WHERE "id" = ${session.userId}
+              FROM "user" WHERE "id" = ${session.userId} FOR KEY SHARE
             `;
           } catch {
             // Audit logging must never break sign-in.

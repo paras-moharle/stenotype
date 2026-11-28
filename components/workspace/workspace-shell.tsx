@@ -26,7 +26,7 @@ const navigation = {
 export function WorkspaceShell({ children, role, pathname, contentClass }: {
   children: React.ReactNode; role: 'student' | 'admin'; pathname: string; contentClass: string;
 }) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, signingOut } = useAuth();
   const links = navigation[role];
 
   return (
@@ -42,8 +42,8 @@ export function WorkspaceShell({ children, role, pathname, contentClass }: {
           <div className="flex shrink-0 items-center gap-1">
             <span className="hidden max-w-40 truncate px-2 text-sm text-muted-foreground sm:inline" title={user?.name}>{user?.name}</span>
             <ThemeSwitch />
-            <button type="button" onClick={signOut} className="shell-nav-link size-11 justify-center p-0" aria-label="Sign out" title="Sign out">
-              <LogOut className="size-4" aria-hidden />
+            <button type="button" onClick={signOut} className="shell-nav-link size-11 justify-center p-0" disabled={signingOut} aria-label={signingOut ? 'Signing out…' : 'Sign out'} title="Sign out">
+              {signingOut ? <span role="status" className="text-xs">Wait…</span> : <LogOut className="size-4" aria-hidden />}
             </button>
           </div>
         </div>

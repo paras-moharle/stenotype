@@ -8,6 +8,7 @@
  */
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 200;
+export const ADMIN_PAGE_SIZE = 25;
 
 export type PageParams = {
   /** Rows to fetch. Callers fetch `take + 1` to detect another page. */
@@ -25,8 +26,8 @@ const integer = (value: string | null, fallback: number): number => {
   return Math.floor(parsed);
 };
 
-export function parsePageParams(request: Request): PageParams {
-  const params = new URL(request.url).searchParams;
+export function parsePageParams(source: Request | URLSearchParams): PageParams {
+  const params = source instanceof URLSearchParams ? source : new URL(source.url).searchParams;
   const limit = Math.min(
     Math.max(integer(params.get('limit'), DEFAULT_PAGE_SIZE), 1),
     MAX_PAGE_SIZE

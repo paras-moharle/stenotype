@@ -1,3 +1,4 @@
+import { lockStudentAccount } from '@/lib/student-account-lock';
 import { dictationReferenceDigest, verifyPracticeTicket } from '@/lib/dictation-practice-ticket';
 import { rejectStorageGrowth } from '@/lib/db-capacity';
 import { NextResponse } from 'next/server';
@@ -9,7 +10,7 @@ import { requireStudent } from '@/lib/api-guard';
 import { takeSharedQuota } from '@/lib/shared-rate-limit';
 import { ATTEMPT_RATE_LIMIT, checkRateLimit } from '@/lib/rate-limit';
 import { readJson, rejectCrossOriginMutation } from '@/lib/mutation-request';
-import { isUniqueViolation } from '@/lib/prisma-errors';
+import { scheduleDatabaseMaintenance } from '@/lib/schedule-database-maintenance';
 import type { TypingAttempt } from '@/generated/prisma/client';
 
 export async function POST(request: Request) {
@@ -18,6 +19,7 @@ export async function POST(request: Request) {
 
   const gate = await requireStudent();
   if (!gate.ok) return gate.response;
+  scheduleDatabaseMaintenance();
 
   const limit = checkRateLimit(
     `attempts:${gate.userId}`, ATTEMPT_RATE_LIMIT.limit, ATTEMPT_RATE_LIMIT.windowMs
@@ -46,9 +48,8 @@ export async function POST(request: Request) {
   const prior = await db.typingAttempt.findUnique({ where: key, include: { reference: true } });
   if (!prior && !limit.allowed) return throttled();
   const ticket = verifyPracticeTicket(practiceTicket, { profileId: gate.profileId, passageId, submissionKey });
-  if (!ticket) return unavailablePractice();
+  if (!ticket || ticket.expiresAt <= Date.now()) return unavailablePractice();
   if (prior) return replay(prior, ticket.digest);
-  if (ticket.expiresAt <= Date.now()) return unavailablePractice();
   const capacity = await rejectStorageGrowth();
   if (capacity) return capacity;
   if (!(await takeSharedQuota(`attempt:${gate.userId}`, ATTEMPT_RATE_LIMIT.limit, ATTEMPT_RATE_LIMIT.windowMs))) {
@@ -91,47 +92,76 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'That speed is not realistically possible.' }, { status: 400 });
   }
 
-  try {
-    const attempt = await db.$transaction(async (tx) => {
-      // Score outside the transaction. At persistence, lock only the current
-      // publication row so an archive, unpublish or delete cannot race the write.
-      const rows = await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "Dictation"
-        WHERE "id" = ${passageId} AND "status" = 'PUBLISHED'
-          AND "publishedAt" IS NOT DISTINCT FROM ${publication}::timestamptz
-          AND "youtubeId" IS NOT DISTINCT FROM ${ticket.youtubeId}::text
-        FOR SHARE
-      `;
-      if (rows.length === 0) return null;
-
-      await tx.dictationReference.createMany({
-        data: { digest, transcript },
-        skipDuplicates: true,
-      });
-      return tx.typingAttempt.create({
-        data: {
-          studentId: gate.profileId,
-          dictationId: passageId,
-          submissionKey,
-          referenceDigest: digest,
-          scoreVersion: 1,
-          typedText: typed,
-          elapsedMs,
-          rawWpm: score.rawWpm,
-          wpm: score.netWpm,
-          accuracy: score.accuracy,
-          completed: score.completion >= 100,
-          ...attemptSnapshot(score),
-        },
-      });
+  const attempt = await db.$transaction(async (tx) => {
+    const student = await lockStudentAccount(tx, gate.userId);
+    const eligible = student && !student.banned && await tx.studentProfile.findFirst({
+      where: { id: gate.profileId, userId: gate.userId, status: 'ACTIVE', user: {
+        sessions: { some: { id: gate.sessionId, expiresAt: { gt: new Date() } } },
+      } },
+      select: { id: true },
     });
-    return attempt ? result(attempt, transcript) : unavailablePractice();
-  } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
-    const winner = await db.typingAttempt.findUnique({ where: key, include: { reference: true } });
-    if (!winner) throw error;
-    return replay(winner, digest);
+    if (!eligible) return 'session-ended' as const;
+    if (ticket.expiresAt <= Date.now()) return null;
+    const pair = { studentId_dictationId: { studentId: gate.profileId, dictationId: passageId } };
+    const current = await tx.typingAttempt.findUnique({
+      where: pair, select: { id: true, submissionKey: true, practiceExpiresAt: true },
+    });
+    if (current?.submissionKey === submissionKey) {
+      return tx.typingAttempt.findUnique({ where: pair, include: { reference: { select: { transcript: true } } } });
+    }
+    const currentExpiry = current?.practiceExpiresAt?.getTime();
+    if (currentExpiry !== undefined && currentExpiry >= ticket.expiresAt) return 'superseded' as const;
+
+    // Score outside the transaction. At persistence, lock only the current
+    // publication row so an archive, unpublish or delete cannot race the write.
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "Dictation"
+      WHERE "id" = ${passageId} AND "status" = 'PUBLISHED'
+        AND "publishedAt" IS NOT DISTINCT FROM ${publication}::timestamptz
+        AND "youtubeId" IS NOT DISTINCT FROM ${ticket.youtubeId}::text
+      FOR SHARE
+    `;
+    if (rows.length === 0) return null;
+
+    await tx.dictationReference.createMany({
+      data: { digest, transcript },
+      skipDuplicates: true,
+    });
+    const saved = {
+      submissionKey,
+      practiceExpiresAt: new Date(ticket.expiresAt),
+      referenceDigest: digest,
+      referenceSnapshot: null,
+      scoreVersion: 1,
+      typedText: typed,
+      elapsedMs,
+      rawWpm: score.rawWpm,
+      wpm: score.netWpm,
+      accuracy: score.accuracy,
+      completed: score.completion >= 100,
+      ...attemptSnapshot(score),
+      createdAt: new Date(),
+    };
+    if (current) {
+      return tx.typingAttempt.update({
+        where: { id: current.id }, data: saved, include: { reference: { select: { transcript: true } } },
+      });
+    }
+    return tx.typingAttempt.create({
+      data: { ...saved, studentId: gate.profileId, dictationId: passageId },
+      include: { reference: { select: { transcript: true } } },
+    });
+  });
+  if (attempt === 'session-ended') {
+    return NextResponse.json({ error: 'Student access ended before the result could be saved.' }, { status: 403 });
   }
+  if (attempt === 'superseded') {
+    return NextResponse.json({
+      code: 'PRACTICE_SUPERSEDED',
+      error: 'A newer practice has a saved result. This transcription was not saved.',
+    }, { status: 409 });
+  }
+  return attempt ? replay(attempt, digest) : unavailablePractice();
 
   function replay(attempt: TypingAttempt & { reference: { transcript: string } | null }, digest: string) {
     if (attempt.referenceDigest !== digest || attempt.dictationId !== passageId || attempt.typedText !== typed || attempt.elapsedMs !== elapsedMs) {
