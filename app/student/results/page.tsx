@@ -99,8 +99,8 @@ export default async function StudentResultsPage({
                   <th className="px-4 py-3 text-left font-medium">Attempted accuracy</th>
                   <th className="px-4 py-3 text-left font-medium">Words</th>
                   <th className="px-4 py-3 text-left font-medium">Punct.</th>
-                  <th className="px-4 py-3 text-left font-medium">Completion</th>
-                  <th className="px-4 py-3 text-left font-medium">Completed</th>
+                  <th className="px-4 py-3 text-left font-medium">Passage covered</th>
+                  <th className="px-4 py-3 text-left font-medium">Fully covered</th>
                 </tr>
               </thead>
               <tbody>
@@ -134,13 +134,7 @@ export default async function StudentResultsPage({
                     </td>
                     <td className="px-4 py-3 font-mono tabular-nums">{attempt.completion}%</td>
                     <td className="px-4 py-3">
-                      <span
-                        className={
-                          attempt.completed
-                            ? 'badge badge-success'
-                            : 'badge badge-neutral'
-                        }
-                      >
+                      <span className="badge badge-neutral">
                         {attempt.completed ? 'Yes' : 'No'}
                       </span>
                     </td>

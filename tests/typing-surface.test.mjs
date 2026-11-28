@@ -20,7 +20,7 @@ const lineWindow = fs.readFileSync('lib/typing/line-window.ts', 'utf8');
 test('the passage window is exactly five whole lines tall', () => {
   assert.ok(source.includes('TYPING_VIEWPORT_HEIGHT_EM'));
   assert.ok(
-    source.includes('style={{ height: `${TYPING_VIEWPORT_HEIGHT_EM}em` }}')
+    source.includes("'--desktop-typing-height': `${TYPING_VIEWPORT_HEIGHT_EM}em`")
   );
   assert.ok(source.includes('overflow-hidden'));
   assert.match(lineWindow, /TYPING_VIEWPORT_LINES = 5/);
@@ -89,17 +89,17 @@ test('the surface is not a second textbox', () => {
   assert.ok(source.includes('aria-label="Typing input'));
 });
 
-test('the surface height matches the five-line window (no empty void)', () => {
+test('the line window derives desktop and mobile height from the line box', () => {
   assert.ok(!source.includes('min-h-[240px] sm:min-h-[300px]'));
-  assert.ok(source.includes('min-h-[260px]'));
+  assert.ok(source.includes('TYPING_VIEWPORT_HEIGHT_EM'));
   assert.ok(source.includes('sm:min-h-[315px]'));
-  assert.ok(source.includes('min-h-[235px]'));
+  assert.match(fs.readFileSync('app/globals.css', 'utf8'), /typing-line-window \{ height: 4lh; \}/);
   assert.ok(source.includes('sm:min-h-[305px]'));
 });
 
 test('the typing surface is separated from the mode and timer controls', () => {
   assert.match(source, /aria-label="Typing practice"/);
-  assert.ok(source.includes('aria-label="Typing practice" className="pt-2"'));
+  assert.ok(source.includes('aria-label="Typing practice" className="relative sm:pt-2"'));
 });
 
 test('the typing screens use the wider container', () => {

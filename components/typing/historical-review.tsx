@@ -1,7 +1,7 @@
 'use client';
 
 import { ReferenceReview } from './reference-review';
-import { ReviewBlock } from './completion-panel';
+import { referenceReview } from '@/lib/typing/reference-review';
 import { useTypingAlignment } from './use-typing-alignment';
 
 export function HistoricalReview({ reference, typed }: { reference: string; typed: string }) {
@@ -9,7 +9,7 @@ export function HistoricalReview({ reference, typed }: { reference: string; type
   return (
     <section className="space-y-4">
       <h2 className="text-h2 font-semibold">Transcription review</h2>
-      {pending ? <p role="status">Preparing the comparison…</p> : alignment ? <><ReferenceReview alignment={alignment} transcript /><ReviewBlock alignment={alignment} transcript /></> : (
+      {pending ? <p role="status">Preparing the comparison…</p> : alignment ? <ReferenceReview review={referenceReview(alignment, true)} transcript /> : (
         <div className="panel p-5">
           <p role="status">The comparison is unavailable. Your saved transcription is shown below.</p>
           <p className="mt-3 whitespace-pre-wrap wrap-break-word font-mono">{typed}</p>

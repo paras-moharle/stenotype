@@ -25,13 +25,13 @@ export default async function HomePage() {
   });
 
   return (
-    <div className="container-typing py-4 sm:py-10">
-      <div className="practice-intro mb-3 max-sm:gap-2 max-sm:pb-3 sm:mb-5">
+    <div className="container-typing py-3 sm:py-10">
+      <div className="practice-intro mb-2 max-sm:gap-1.5 max-sm:pb-3 sm:mb-5">
         <div>
-          <p className="mb-2 text-xs sm:mb-3 sm:text-sm font-medium text-brand">Typing &amp; stenography practice</p>
-          <h1 className="editorial-title max-sm:text-[clamp(1.8rem,7vw,2.25rem)]">Build speed with precision.</h1>
+          <p className="mb-1.5 text-xs sm:mb-3 sm:text-sm font-medium text-brand">Typing &amp; stenography practice</p>
+          <h1 className="editorial-title max-sm:text-[clamp(1.9rem,7.9vw,2.75rem)] max-sm:leading-[1.03]">Build speed with <em className="sm:not-italic">precision.</em></h1>
         </div>
-        <p className="practice-note max-sm:text-sm max-sm:leading-snug">Practice with curated passages, your own text or published dictations.</p>
+        <p className="practice-note max-sm:text-sm max-sm:leading-snug">Practice with curated passages, custom text or dictations.</p>
       </div>
       <TypingClient variant="public" initialPassage={initialPassage} />
     </div>

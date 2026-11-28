@@ -15,6 +15,7 @@
 import { z } from 'zod';
 
 import { MAX_ALIGN_CHARS } from './typing/scoring';
+import { MAX_PRACTICE_TICKET_LENGTH } from './dictation-practice-ticket';
 
 const MAX_TYPED_CHARS = MAX_ALIGN_CHARS;
 
@@ -22,6 +23,7 @@ export const attemptSubmissionSchema = z.object({
   /** Published dictation being transcribed; the server fetches its text. */
   passageId: z.string().min(1, 'A dictation is required').max(128),
   submissionKey: z.uuid(),
+  practiceTicket: z.string().min(1).max(MAX_PRACTICE_TICKET_LENGTH),
   /** Exactly what the student typed. */
   typed: z.string().max(MAX_TYPED_CHARS),
   /** Wall-clock time from first keystroke to submit. */

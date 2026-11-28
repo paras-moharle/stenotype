@@ -1,6 +1,7 @@
 import { rejectStorageGrowth } from '@/lib/db-capacity';
 import { readJson } from '@/lib/mutation-request';
 import { NextResponse } from 'next/server';
+import { dictationReferenceDigest } from '@/lib/dictation-practice-ticket';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/admin/require-admin';
 import { publicationTranscriptError, updateDictationSchema } from '@/lib/admin/schemas';
@@ -79,22 +80,35 @@ export async function PUT(
     if (capacity) return capacity;
   }
 
+  // The compare-and-swap must advance even if two edits land in one millisecond.
+  const updatedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1));
+  const previousPublication = existing.status === 'ARCHIVED' && status === 'PUBLISHED' ? null : existing.publishedAt;
   try {
-    const dictation = await db.dictation.update({
-      where: { id, updatedAt: existing.updatedAt },
-      data: {
-        ...(title !== undefined ? { title } : {}),
-        ...(category !== undefined ? { category } : {}),
-        ...(referenceTranscript !== undefined ? { referenceTranscript } : {}),
-        ...(youtubeId !== undefined ? { youtubeId } : {}),
-        ...(nextDuration !== undefined ? { durationSeconds: nextDuration } : {}),
-        ...(status !== undefined ? { status } : {}),
-        // Editing a published dictation keeps its original publish date;
-        // publishing a draft stamps one; moving to draft clears it.
-        ...(status !== undefined
-          ? { publishedAt: nextPublishedAt(existing.publishedAt, status) }
-          : {}),
-      },
+    const dictation = await db.$transaction(async (tx) => {
+      const updated = await tx.dictation.update({
+        where: { id, updatedAt: existing.updatedAt },
+        data: {
+          updatedAt,
+          ...(title !== undefined ? { title } : {}),
+          ...(category !== undefined ? { category } : {}),
+          ...(referenceTranscript !== undefined ? { referenceTranscript } : {}),
+          ...(youtubeId !== undefined ? { youtubeId } : {}),
+          ...(nextDuration !== undefined ? { durationSeconds: nextDuration } : {}),
+          ...(status !== undefined ? { status } : {}),
+          // Editing a published dictation keeps its original publish date;
+          // publishing a draft stamps one; moving to draft clears it.
+          ...(status !== undefined
+            ? { publishedAt: nextPublishedAt(previousPublication, status, updatedAt) }
+            : {}),
+        },
+      });
+      if (growsText && existing.status === 'PUBLISHED') {
+        await tx.dictationReference.createMany({
+          data: { digest: dictationReferenceDigest(existing.referenceTranscript), transcript: existing.referenceTranscript },
+          skipDuplicates: true,
+        });
+      }
+      return updated;
     });
 
     return NextResponse.json({ dictation });
